@@ -1,0 +1,5 @@
+Coloca aquí un archivo icon.ico de 256x256 con el nombre "icon.ico".
+Puedes generarlo en: https://convertico.com/
+
+El ícono es opcional para el build — si no existe, electron-builder usará el ícono por defecto de Electron.
+Para omitir el ícono en package.json temporalmente, elimina la línea "icon": "build/icon.ico" del bloque win.

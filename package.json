@@ -1,0 +1,67 @@
+{
+  "name": "snufkin-studio",
+  "version": "1.0.0",
+  "description": "SnufkinStudio — Auto Captions",
+  "author": "SnufkinStudio",
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder build --win --x64",
+    "build:dir": "electron-builder build --win --x64 --dir",
+    "release": "electron-builder build --win --x64 --publish always"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.3"
+  },
+  "devDependencies": {
+    "electron": "^28.3.3",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.snufkinstudio.autocaptions",
+    "productName": "SnufkinStudio",
+    "copyright": "SnufkinStudio",
+    "publish": {
+      "provider": "github",
+      "owner": "KairosCode1",
+      "repo": "snufkin-studio",
+      "releaseType": "release"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "SnufkinStudio"
+    },
+    "extraResources": [
+      {
+        "from": "dist/server/server/",
+        "to": "server/"
+      },
+      {
+        "from": "resources/tools/",
+        "to": "tools/"
+      },
+      {
+        "from": "static/",
+        "to": "static/"
+      }
+    ],
+    "files": [
+      "electron/**/*",
+      "package.json"
+    ],
+    "asar": true
+  }
+}
