@@ -1,6 +1,6 @@
 {
   "name": "snufkin-studio",
-  "version": "1.1.10",
+  "version": "1.1.11",
   "description": "SnufkinStudio — Auto Captions",
   "author": "SnufkinStudio",
   "main": "electron/main.js",
