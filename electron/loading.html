@@ -134,16 +134,18 @@
   <script>
     const messages = [
       'Iniciando servidor…',
-      'Cargando modelos…',
+      'Cargando módulos…',
+      'Preparando modelos de IA…',
       'Preparando interfaz…',
       'Casi listo…',
+      'Un momento más…',
     ];
     let i = 0;
     const el = document.getElementById('status');
     setInterval(() => {
       i = Math.min(i + 1, messages.length - 1);
       el.textContent = messages[i];
-    }, 3500);
+    }, 4000);
   </script>
 </body>
 </html>

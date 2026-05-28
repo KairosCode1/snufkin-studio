@@ -88,8 +88,8 @@ def _save_config(data: dict):
     )
 
 # Jobs en memoria
-jobs:      dict = {}   # subtítulos: job_id → {queue, status, output, filename}
-clip_jobs: dict = {}   # auto clips: job_id → {queue, status, clips, filename}
+jobs:      dict = {}   # subtítulos: job_id → {queue, status, output, filename, cancelled}
+clip_jobs: dict = {}   # auto clips: job_id → {queue, status, clips, filename, cancelled}
 
 
 # ── Rutas ────────────────────────────────────────────────────────────────────
@@ -108,6 +108,10 @@ async def upload(
     orientation: str = Form("vertical"),
     whisper_model: str = Form("medium"),
     highlight_color: str = Form("#FFE033"),
+    enable_zoom: str = Form("true"),
+    caption_pos: str = Form("15"),
+    caption_font: str = Form("outfit"),
+    caption_anim: str = Form("default"),
 ):
     job_id = str(uuid.uuid4())[:8]
     INPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -116,16 +120,31 @@ async def upload(
         shutil.copyfileobj(file.file, f)
 
     q = queue.Queue()
-    jobs[job_id] = {"queue": q, "status": "processing", "output": None, "filename": file.filename}
+    _pos = int(caption_pos) if caption_pos.isdigit() else 15
+    jobs[job_id] = {
+        "queue": q, "status": "processing", "output": None,
+        "filename": file.filename, "cancelled": False,
+        # Store render params for potential re-render
+        "caption_style": caption_style, "orientation": orientation,
+        "whisper_model": whisper_model, "highlight_color": highlight_color,
+        "enable_zoom": enable_zoom.lower() == "true",
+        "caption_pos": _pos,
+        "caption_font": caption_font, "caption_anim": caption_anim,
+    }
 
     def run():
         try:
             process_video(video_path, DEFAULT_LANGUAGE, whisper_model, progress_q=q,
                           caption_style=caption_style, orientation=orientation,
-                          highlight_color=highlight_color)
+                          highlight_color=highlight_color,
+                          enable_zoom=(enable_zoom.lower() == "true"),
+                          caption_pos=_pos,
+                          caption_font=caption_font,
+                          caption_anim=caption_anim)
             out = OUTPUT_DIR / f"{video_path.stem}-captions.mp4"
             if out.exists():
-                jobs[job_id].update({"status": "done", "output": out})
+                jobs[job_id].update({"status": "done", "output": out,
+                                     "project_dir": PROJECTS_DIR / video_path.stem})
             else:
                 jobs[job_id]["status"] = "error"
                 q.put("ERROR:No se generó el archivo de salida")
@@ -145,12 +164,18 @@ async def progress(job_id: str):
     def stream():
         q = jobs[job_id]["queue"]
         while True:
+            if jobs[job_id].get("cancelled"):
+                yield "data: CANCELLED\n\n"
+                break
             try:
-                msg = q.get(timeout=300)
+                msg = q.get(timeout=1)
                 yield f"data: {msg}\n\n"
-                if msg.startswith("DONE") or msg.startswith("ERROR"):
+                if msg.startswith("DONE") or msg.startswith("ERROR") or msg == "CANCELLED":
                     break
             except queue.Empty:
+                if jobs[job_id].get("cancelled"):
+                    yield "data: CANCELLED\n\n"
+                    break
                 yield "data: KEEPALIVE\n\n"
 
     return StreamingResponse(stream(), media_type="text/event-stream",
@@ -166,6 +191,34 @@ async def download(job_id: str):
     return FileResponse(path=out, filename=out.name, media_type="video/mp4")
 
 
+@app.get("/source-video/{job_id}")
+async def source_video(job_id: str):
+    """Serves the original input video WITHOUT baked-in captions.
+    Used by the editor preview so captions can be rendered as a clean React overlay."""
+    job = jobs.get(job_id)
+    if not job or job["status"] != "done":
+        raise HTTPException(status_code=404, detail="Job no disponible")
+    # Primary: project_dir/<filename> (copy made during process_video)
+    proj = job.get("project_dir")
+    src: Path | None = None
+    if proj:
+        candidate = Path(proj) / job["filename"]
+        if candidate.exists():
+            src = candidate
+    # Fallback: INPUT_DIR/<filename>
+    if src is None:
+        candidate = INPUT_DIR / job["filename"]
+        if candidate.exists():
+            src = candidate
+    if src is None:
+        # Last resort: return rendered output (has captions but at least works)
+        src = job.get("output")
+    if src is None or not Path(src).exists():
+        raise HTTPException(status_code=404, detail="Vídeo fuente no encontrado")
+    return FileResponse(path=str(src), media_type="video/mp4",
+                        headers={"Accept-Ranges": "bytes"})
+
+
 # ── Auto Clips ────────────────────────────────────────────────────────────────
 
 @app.post("/upload-clips")
@@ -177,6 +230,7 @@ async def upload_clips(
     clip_dur_range: str = Form("medium"),
     whisper_model:  str = Form("medium"),
     highlight_color: str = Form("#FFE033"),
+    sfx_pack:       str = Form("none"),
 ):
     job_id = str(uuid.uuid4())[:8]
     INPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -185,7 +239,7 @@ async def upload_clips(
         shutil.copyfileobj(file.file, f)
 
     q = queue.Queue()
-    clip_jobs[job_id] = {"queue": q, "status": "processing", "clips": [], "filename": file.filename}
+    clip_jobs[job_id] = {"queue": q, "status": "processing", "clips": [], "filename": file.filename, "cancelled": False}
 
     def run():
         try:
@@ -213,12 +267,18 @@ async def progress_clips(job_id: str):
     def stream():
         q = clip_jobs[job_id]["queue"]
         while True:
+            if clip_jobs[job_id].get("cancelled"):
+                yield "data: CANCELLED\n\n"
+                break
             try:
-                msg = q.get(timeout=600)
+                msg = q.get(timeout=1)
                 yield f"data: {msg}\n\n"
-                if msg.startswith("CDONE") or msg.startswith("ERROR"):
+                if msg.startswith("CDONE") or msg.startswith("ERROR") or msg == "CANCELLED":
                     break
             except queue.Empty:
+                if clip_jobs[job_id].get("cancelled"):
+                    yield "data: CANCELLED\n\n"
+                    break
                 yield "data: KEEPALIVE\n\n"
 
     return StreamingResponse(stream(), media_type="text/event-stream",
@@ -245,6 +305,197 @@ async def download_clip(job_id: str, clip_idx: int):
     out: Path = match["path"]
     safe_title = re.sub(r'[\\/:*?"<>|]', '', match["title"]).strip() or out.stem
     return FileResponse(path=out, filename=f"{safe_title}.mp4", media_type="video/mp4")
+
+
+# ── Trim (post-render editor) ─────────────────────────────────────────────────
+
+@app.post("/trim/{job_id}")
+async def trim_video(job_id: str, request: Request):
+    """Recorta el vídeo renderizado. Body JSON: {start: float, end: float}"""
+    import subprocess as _sp
+    job = jobs.get(job_id)
+    if not job or job["status"] != "done":
+        raise HTTPException(status_code=400, detail="Video no listo")
+
+    body = await request.json()
+    start = float(body.get("start", 0))
+    end   = float(body.get("end",   -1))
+
+    out: Path = job["output"]
+    trimmed   = OUTPUT_DIR / f"{out.stem}-trimmed.mp4"
+
+    # Build FFmpeg command
+    from auto_captions import FFMPEG_EXE
+    cmd = [str(FFMPEG_EXE), "-y", "-i", str(out), "-ss", str(start)]
+    if end > 0 and end > start:
+        cmd += ["-to", str(end)]
+    cmd += ["-c", "copy", str(trimmed)]
+
+    try:
+        result = _sp.run(cmd, capture_output=True, timeout=120)
+        if result.returncode != 0 or not trimmed.exists():
+            raise HTTPException(status_code=500, detail="Error al recortar con FFmpeg")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return FileResponse(path=trimmed, filename=f"{out.stem}-trimmed.mp4", media_type="video/mp4")
+
+
+@app.get("/job-info/{job_id}")
+async def job_info(job_id: str):
+    """Devuelve información del job (duración del vídeo de salida)."""
+    import subprocess as _sp
+    import json as _json
+    job = jobs.get(job_id)
+    if not job or job["status"] != "done":
+        raise HTTPException(status_code=404)
+    out: Path = job["output"]
+    try:
+        from auto_captions import FFPROBE_EXE
+        r = _sp.run(
+            [str(FFPROBE_EXE), "-v", "quiet", "-print_format", "json", "-show_format", str(out)],
+            capture_output=True, timeout=15
+        )
+        data = _json.loads(r.stdout.decode("utf-8", errors="ignore"))
+        duration = float(data["format"]["duration"])
+    except Exception:
+        duration = 0.0
+    captions = []
+    try:
+        proj = job.get("project_dir")
+        if proj:
+            caps_file = Path(proj) / "captions.json"
+            if caps_file.exists():
+                with open(caps_file, encoding="utf-8") as _f:
+                    captions = _json.loads(_f.read())
+    except Exception:
+        pass
+    return JSONResponse({
+        "duration":       duration,
+        "filename":       out.name,
+        "captions":       captions,
+        "caption_pos":    job.get("caption_pos",    15),
+        "caption_style":  job.get("caption_style",  "style1"),
+        "highlight_color":job.get("highlight_color","#FFE033"),
+        "caption_font":   job.get("caption_font",   "outfit"),
+        "orientation":    job.get("orientation",    "vertical"),
+    })
+
+
+# ── Guardar captions editadas ────────────────────────────────────────────────
+
+@app.post("/save-captions/{job_id}")
+async def save_captions(job_id: str, request: Request):
+    """Guarda las captions editadas en el editor."""
+    data = await request.json()
+    captions = data.get("captions", [])
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job no encontrado")
+    proj = job.get("project_dir")
+    if not proj or not Path(proj).exists():
+        raise HTTPException(status_code=404, detail="Directorio de proyecto no encontrado")
+    caps_file = Path(proj) / "captions.json"
+    with open(caps_file, "w", encoding="utf-8") as _f:
+        json.dump(captions, _f, ensure_ascii=False, indent=2)
+    return JSONResponse({"ok": True})
+
+
+# ── Re-render (apply caption edits + position change) ────────────────────────
+
+@app.post("/re-render/{job_id}")
+async def re_render(job_id: str, request: Request):
+    """Re-renders the video using existing captions.json (no re-transcription)."""
+    job = jobs.get(job_id)
+    if not job or job["status"] not in ("done",):
+        raise HTTPException(status_code=400, detail="Job no disponible para re-render")
+
+    body = await request.json()
+    new_caption_pos = int(body.get("caption_pos", job.get("caption_pos", 15)))
+
+    rr_q = queue.Queue()
+    rr_job_id = f"{job_id}_rr"
+    jobs[rr_job_id] = {
+        "queue": rr_q, "status": "processing", "output": None,
+        "filename": job["filename"], "cancelled": False,
+    }
+
+    video_path = INPUT_DIR / job["filename"]
+
+    def run_rr():
+        try:
+            process_video(
+                video_path, DEFAULT_LANGUAGE, job.get("whisper_model", "medium"),
+                progress_q=rr_q,
+                caption_style=job.get("caption_style", "style1"),
+                orientation=job.get("orientation", "vertical"),
+                highlight_color=job.get("highlight_color", "#FFE033"),
+                enable_zoom=job.get("enable_zoom", True),
+                caption_pos=new_caption_pos,
+                caption_font=job.get("caption_font", "outfit"),
+                caption_anim=job.get("caption_anim", "default"),
+                reuse_captions=True,
+            )
+            out = OUTPUT_DIR / f"{Path(video_path).stem}-captions.mp4"
+            if out.exists():
+                jobs[rr_job_id].update({
+                    "status": "done", "output": out,
+                    "project_dir": PROJECTS_DIR / Path(video_path).stem,
+                })
+                # Update original job so /download still works
+                jobs[job_id]["output"] = out
+                jobs[job_id]["caption_pos"] = new_caption_pos
+            else:
+                jobs[rr_job_id]["status"] = "error"
+                rr_q.put("ERROR:No se generó el archivo de salida")
+        except Exception as e:
+            jobs[rr_job_id]["status"] = "error"
+            rr_q.put(f"ERROR:{e}")
+
+    threading.Thread(target=run_rr, daemon=True).start()
+    return {"rr_job_id": rr_job_id}
+
+
+@app.get("/progress-rerender/{rr_job_id}")
+async def progress_rerender(rr_job_id: str):
+    if rr_job_id not in jobs:
+        raise HTTPException(status_code=404, detail="Re-render job no encontrado")
+
+    def stream():
+        q = jobs[rr_job_id]["queue"]
+        while True:
+            if jobs[rr_job_id].get("cancelled"):
+                yield "data: CANCELLED\n\n"
+                break
+            try:
+                msg = q.get(timeout=1)
+                yield f"data: {msg}\n\n"
+                if msg.startswith("DONE") or msg.startswith("ERROR") or msg == "CANCELLED":
+                    break
+            except queue.Empty:
+                if jobs[rr_job_id].get("cancelled"):
+                    yield "data: CANCELLED\n\n"
+                    break
+                yield "data: KEEPALIVE\n\n"
+
+    return StreamingResponse(stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+# ── Cancelar job ─────────────────────────────────────────────────────────────
+
+@app.post("/api/cancel/{job_id}")
+async def cancel_job(job_id: str):
+    """Cancela un job en curso (subtítulos o clips)."""
+    if job_id in jobs:
+        jobs[job_id]["cancelled"] = True
+        jobs[job_id]["status"] = "cancelled"
+        return {"ok": True}
+    if job_id in clip_jobs:
+        clip_jobs[job_id]["cancelled"] = True
+        clip_jobs[job_id]["status"] = "cancelled"
+        return {"ok": True}
+    return {"ok": False, "detail": "Job no encontrado"}
 
 
 # ── Settings API ─────────────────────────────────────────────────────────────
@@ -286,7 +537,44 @@ def _open_browser():
     webbrowser.open(f"http://localhost:{PORT}")
 
 
+def _free_port(port: int):
+    """Si otro proceso ocupa este puerto, lo mata. Solo Windows.
+
+    Defensa en profundidad: si Electron mata mal, el server huérfano sigue en
+    el puerto y el nuevo server falla al hacer bind. Aquí lo matamos antes.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import subprocess as _sp
+        out = _sp.run(
+            ["netstat", "-aon"], capture_output=True, text=True, timeout=5,
+        ).stdout or ""
+        pids = set()
+        for line in out.splitlines():
+            if f":{port}" not in line or "LISTENING" not in line:
+                continue
+            pid = line.strip().split()[-1]
+            if pid.isdigit() and pid != "0":
+                pids.add(pid)
+        my_pid = str(os.getpid())
+        for pid in pids - {my_pid}:
+            print(f"  [server] Matando proceso huérfano PID {pid} en puerto {port}")
+            try:
+                _sp.run(["taskkill", "/F", "/PID", pid], timeout=5,
+                        stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
+            except Exception:
+                pass
+        if pids - {my_pid}:
+            time.sleep(0.5)   # esperar a que el SO libere el puerto
+    except Exception as e:
+        print(f"  [server] Aviso: no se pudo liberar puerto: {e}")
+
+
 if __name__ == "__main__":
+    # Liberar puerto antes de hacer bind (huérfanos de sesiones anteriores)
+    _free_port(PORT)
+
     print(f"\n  Auto Captions corriendo en http://localhost:{PORT}\n")
     # Sólo abrir navegador cuando se ejecuta manualmente (no bajo Electron)
     # APP_WORKSPACE es seteada por Electron; si está presente, Electron gestiona la ventana

@@ -20,4 +20,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   /** Remove the stored Groq API key */
   deleteGroqKey: () => ipcRenderer.invoke('settings:delete-key'),
+
+  /** Activation */
+  activationCheck:    ()       => ipcRenderer.invoke('activation:check'),
+  activationValidate: (code)   => ipcRenderer.invoke('activation:validate', code),
+
+  /** Frameless window controls */
+  minimizeWindow: () => ipcRenderer.send('window:minimize'),
+  maximizeWindow: () => ipcRenderer.send('window:maximize'),
+  closeWindow:    () => ipcRenderer.send('window:close'),
 });

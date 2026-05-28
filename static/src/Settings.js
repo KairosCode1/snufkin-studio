@@ -486,7 +486,7 @@ function SettingsButton() {
         title="Configuración"
         style={{
           position: 'fixed',
-          top: 18, right: 20,
+          top: window.electronAPI ? 50 : 18, right: 20,
           zIndex: 100,
           background: 'rgba(255,255,255,0.05)',
           border: '1px solid rgba(255,255,255,0.07)',

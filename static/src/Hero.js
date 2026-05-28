@@ -1,5 +1,51 @@
 // Hero section
-const { motion: motionHero } = window.Motion;
+const { motion: motionHero, AnimatePresence: AnimatePresenceHero } = window.Motion;
+const { useState: useStateHero, useEffect: useEffectHero } = React;
+
+// ── Carrusel de palabras ─────────────────────────────────────────────────────
+const CAROUSEL_WORDS = ["Subtítulos", "Sincronización", "Gestión", "Edición"];
+
+function WordCarousel() {
+  const [idx, setIdx] = useStateHero(0);
+
+  useEffectHero(() => {
+    const id = setInterval(() => setIdx(i => (i + 1) % CAROUSEL_WORDS.length), 950);
+    return () => clearInterval(id);
+  }, []);
+
+  // La palabra más larga ("Sincronización") actúa de placeholder invisible
+  // para reservar el ancho exacto — la palabra animada va por encima en absolute.
+  // Sin overflow:hidden → el glow se expande libremente, sin caja visible.
+  return (
+    <span style={{ position: "relative", display: "inline-block" }}>
+      {/* placeholder — reserva espacio con la palabra más larga */}
+      <span style={{ visibility: "hidden", pointerEvents: "none", whiteSpace: "nowrap" }}>
+        Sincronización
+      </span>
+      {/* palabra animada encima, centrada */}
+      <AnimatePresenceHero mode="wait">
+        <motionHero.span
+          key={CAROUSEL_WORDS[idx]}
+          initial={{ opacity: 0, y: 14,  filter: "blur(6px)" }}
+          animate={{ opacity: 1, y: 0,   filter: "blur(0px)" }}
+          exit={{    opacity: 0, y: -10, filter: "blur(6px)" }}
+          transition={{ duration: 0.17, ease: [0.16, 1, 0.3, 1] }}
+          style={{
+            position: "absolute",
+            left: 0,
+            top: 0,
+            whiteSpace: "nowrap",
+            color: "#7C85E0",
+            textShadow:
+              "0 0 30px rgba(124,133,224,0.60), 0 0 70px rgba(94,106,210,0.25)",
+          }}
+        >
+          {CAROUSEL_WORDS[idx]}
+        </motionHero.span>
+      </AnimatePresenceHero>
+    </span>
+  );
+}
 
 const HERO_VIDEO_SRC =
   "https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260418_080021_d598092b-c4c2-4e53-8e46-94cf9064cd50.mp4";
@@ -14,6 +60,8 @@ function Hero() {
   const FV       = window.FadingVideo;
   const BlurText = window.BlurText;
   const Uploader = window.Uploader;
+
+  const [videoDone, setVideoDone] = useStateHero(false);
 
   return (
     <section
@@ -53,49 +101,88 @@ function Hero() {
       {/* ── Main content ─────────────────────────────────────────────── */}
       <div className="relative z-10 flex flex-col items-center justify-center min-h-screen text-center px-4 pb-16">
 
-        {/* ── Logo ── */}
-        <motionHero.div {...heroEnter(0.15)} style={{ marginBottom: "2.1em" }}>
-          <span style={{
-            fontFamily: "'Cormorant Garamond', 'Cormorant', Georgia, serif",
-            fontStyle: "italic",
-            fontWeight: 600,
-            fontSize: "clamp(9rem, 18vw, 14rem)",
-            letterSpacing: "-2px",
-            lineHeight: 0.9,
-            userSelect: "none",
-            whiteSpace: "nowrap",
-            display: "block",
-          }}>
-            <span style={{
-              color: "#EDEDEF",
-              textShadow: "0 0 60px rgba(255,255,255,0.20), 0 0 120px rgba(255,255,255,0.08)",
-            }}>Snufkin</span>
-            <span style={{
-              color: "#7C85E0",
-              textShadow: "0 0 60px rgba(124,133,224,0.60), 0 0 120px rgba(94,106,210,0.30)",
-            }}>Studio</span>
-          </span>
-        </motionHero.div>
+        {/* ── Logo + título + tagline: desaparecen cuando el vídeo está listo ── */}
+        <AnimatePresenceHero>
+          {!videoDone && (
+            <motionHero.div
+              key="hero-text"
+              initial={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -24, filter: "blur(8px)", transition: { duration: 0.55, ease: [0.4,0,0.2,1] } }}
+              style={{ display:"flex", flexDirection:"column", alignItems:"center", width:"100%" }}
+            >
+              {/* Logo */}
+              <motionHero.div {...heroEnter(0.15)} style={{ marginBottom: "2.1em" }}>
+                <span style={{
+                  fontFamily: "'Cormorant Garamond', 'Cormorant', Georgia, serif",
+                  fontStyle: "italic",
+                  fontWeight: 600,
+                  fontSize: "clamp(9rem, 18vw, 14rem)",
+                  letterSpacing: "-2px",
+                  lineHeight: 0.9,
+                  userSelect: "none",
+                  whiteSpace: "nowrap",
+                  display: "block",
+                }}>
+                  <span style={{
+                    color: "#EDEDEF",
+                    textShadow: "0 0 60px rgba(255,255,255,0.20), 0 0 120px rgba(255,255,255,0.08)",
+                  }}>Snufkin</span>
+                  <span style={{
+                    color: "#7C85E0",
+                    textShadow: "0 0 60px rgba(124,133,224,0.60), 0 0 120px rgba(94,106,210,0.30)",
+                  }}>Studio</span>
+                </span>
+              </motionHero.div>
 
-        {/* ── Título (-10%) ── */}
-        <motionHero.div {...heroEnter(0.55)} className="w-full flex justify-center">
-          <BlurText
-            text="Crea tus subtítulos en segundos"
-            wordClassName="bg-gradient-to-b from-[#EDEDEF] via-white/95 to-white/70 bg-clip-text text-transparent"
-            className="text-[2.4rem] md:text-[3.6rem] lg:text-[4.95rem] font-heading font-semibold leading-[1.06] max-w-4xl justify-center tracking-[-0.03em]"
-          />
-        </motionHero.div>
+              {/* Título con carrusel */}
+              <motionHero.div {...heroEnter(0.55)} className="w-full flex justify-center">
+                <div style={{
+                  fontFamily: "'Inter', 'Outfit', sans-serif",
+                  fontWeight: 700,
+                  fontSize: "clamp(1.65rem, 4.5vw, 3.45rem)",
+                  lineHeight: 1.1,
+                  letterSpacing: "-0.03em",
+                  textAlign: "center",
+                  color: "#EDEDEF",
+                  margin: 0,
+                  userSelect: "none",
+                  whiteSpace: "nowrap",
+                }}>
+                  <span>Tu estudio de </span><WordCarousel />
+                </div>
+              </motionHero.div>
 
-        <motionHero.p
-          {...heroEnter(0.85)}
-          className="mt-5 text-sm md:text-base max-w-xs font-light leading-relaxed"
-          style={{ color: "#8A8F98", fontFamily: "'Inter', sans-serif" }}
-        >
-          Herramienta gratuita. Sin registro.
-        </motionHero.p>
+            </motionHero.div>
+          )}
+        </AnimatePresenceHero>
 
-        <Uploader delay={1.05} />
+        <Uploader delay={1.05} onDone={() => setVideoDone(true)} onBack={() => setVideoDone(false)} />
       </div>
+
+      {/* ── Small brand — aparece cuando el hero está oculto ───────── */}
+      <AnimatePresenceHero>
+        {videoDone && (
+          <motionHero.div
+            key="small-brand"
+            initial={{ opacity: 0, x: -8 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
+            style={{
+              position: "fixed", top: 16, left: 18, zIndex: 50,
+              fontFamily: "'Cormorant Garamond', 'Cormorant', Georgia, serif",
+              fontStyle: "italic", fontWeight: 600,
+              fontSize: "1.5rem", letterSpacing: "-0.5px",
+              lineHeight: 1, userSelect: "none", pointerEvents: "none",
+            }}
+          >
+            <img
+              src="/static/icon.png"
+              style={{ width: 32, height: 32, borderRadius: 8, display: "block" }}
+              alt="SnufkinStudio"
+            />
+          </motionHero.div>
+        )}
+      </AnimatePresenceHero>
     </section>
   );
 }

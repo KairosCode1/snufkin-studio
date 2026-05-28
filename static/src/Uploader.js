@@ -1,5 +1,5 @@
 // Uploader — Selección de modo + flujo de subtítulos y auto clips
-const { useState: useStateU, useRef: useRefU, useCallback: useCallbackU } = React;
+const { useState: useStateU, useRef: useRefU, useCallback: useCallbackU, useEffect: useEffectU } = React;
 const { motion: motionU } = window.Motion;
 
 // ── Icons ──
@@ -448,21 +448,223 @@ function DropZone({ onFiles, dragOver, setDragOver, inputRef, hint, inputId }) {
 
 // ── Estilos compartidos ──
 const backBtnStyle = {
-  display:"inline-flex", alignItems:"center", gap:6, marginBottom:14,
-  fontSize:11, color:"rgba(255,255,255,0.35)", background:"none", border:"none",
+  display:"inline-flex", alignItems:"center", gap:7, marginBottom:18,
+  fontSize:13, color:"rgba(255,255,255,0.35)", background:"none", border:"none",
   cursor:"pointer", fontFamily:"'Inter',sans-serif", letterSpacing:0.5, transition:"color 0.15s",
 };
 
 const sectionLabel = (text) => (
   <div style={{
-    fontSize:13, letterSpacing:"0.16em",
+    fontSize:"clamp(26px, 4.5vw, 66px)",
+    letterSpacing:"-0.02em",
     color:"rgba(148,155,236,0.95)",
-    fontFamily:"'Outfit',sans-serif", fontWeight:700,
-    marginBottom:14, textTransform:"uppercase",
+    fontFamily:"'Outfit',sans-serif", fontWeight:800,
+    marginBottom:48, textTransform:"uppercase",
+    lineHeight:1.05, textAlign:"center",
+    textShadow:"0 0 60px rgba(124,133,224,0.35)",
   }}>
     {text}
   </div>
 );
+
+// ── Preview del video renderizado ──────────────────────────────────────────────
+function VideoPreview({ jobId, orientation }) {
+  const vidRef    = useRefU(null);
+  const scrubRef  = useRefU(null);
+  const rafRef    = useRefU(null);
+  const [playing,     setPlaying]     = useStateU(false);
+  const [muted,       setMuted]       = useStateU(true);
+  const [currentTime, setCurrentTime] = useStateU(0);
+  const [duration,    setDuration]    = useStateU(0);
+  const [scrubbing,   setScrubbing]   = useStateU(false);
+
+  const fmtTime = (s) => {
+    const m = Math.floor(s / 60);
+    const sec = Math.floor(s % 60);
+    return `${m}:${sec.toString().padStart(2, '0')}`;
+  };
+
+  // RAF loop para currentTime
+  useEffectU(() => {
+    const loop = () => {
+      if (vidRef.current) setCurrentTime(vidRef.current.currentTime);
+      rafRef.current = requestAnimationFrame(loop);
+    };
+    rafRef.current = requestAnimationFrame(loop);
+    return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
+  }, []);
+
+  // Metadata + registro de pausa global
+  useEffectU(() => {
+    const v = vidRef.current;
+    if (!v) return;
+
+    window.__aeliosPreviewPause = () => { v.pause(); setPlaying(false); };
+
+    const onMeta = () => {
+      const dur = v.duration || 0;
+      setDuration(dur);
+      if (dur < 60) {
+        v.currentTime = 0;
+      } else {
+        const start = Math.max(1, Math.min(dur * 0.15, dur - 7));
+        const end   = Math.min(start + 7, dur - 0.1);
+        v.currentTime = start;
+        const check = () => {
+          if (!v.paused && v.currentTime >= end) v.currentTime = start;
+        };
+        v.addEventListener('timeupdate', check);
+        return () => v.removeEventListener('timeupdate', check);
+      }
+    };
+    v.addEventListener('loadedmetadata', onMeta);
+    v.play().catch(() => {});
+    return () => {
+      v.removeEventListener('loadedmetadata', onMeta);
+      delete window.__aeliosPreviewPause;
+    };
+  }, [jobId]);
+
+  // Scrub drag
+  useEffectU(() => {
+    if (!scrubbing) return;
+    const onMove = (e) => {
+      if (!scrubRef.current || !vidRef.current || !duration) return;
+      const rect = scrubRef.current.getBoundingClientRect();
+      const x = (e.clientX - rect.left) / rect.width;
+      const t = Math.max(0, Math.min(1, x)) * duration;
+      vidRef.current.currentTime = t;
+      setCurrentTime(t);
+    };
+    const onUp = () => setScrubbing(false);
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    return () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+  }, [scrubbing, duration]);
+
+  const isVertical = orientation !== "horizontal";
+  const W = isVertical ? 320 : 520;
+  const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
+
+  return (
+    <div style={{
+      display:"flex", flexDirection:"column", alignItems:"center",
+      gap:0, marginBottom:18,
+    }}>
+      {/* etiqueta */}
+      <div style={{
+        fontSize:10, color:"rgba(255,255,255,0.30)", letterSpacing:".06em",
+        textTransform:"uppercase", fontFamily:"'Outfit',sans-serif",
+        marginBottom:8,
+      }}>
+        Vista previa
+      </div>
+      {/* vídeo */}
+      <div style={{
+        position:"relative",
+        borderRadius:12,
+        overflow:"hidden",
+        boxShadow:"0 0 0 1px rgba(255,255,255,0.09), 0 6px 28px rgba(0,0,0,0.75)",
+        width: W,
+        background:"#000",
+      }}>
+        <video
+          ref={vidRef}
+          src={`/download/${jobId}`}
+          muted={muted}
+          playsInline
+          loop
+          onPlay={() => setPlaying(true)}
+          onPause={() => setPlaying(false)}
+          style={{ display:"block", width:"100%", height:"auto" }}
+        />
+        {/* Botón play/pause */}
+        <button
+          onClick={() => {
+            const v = vidRef.current;
+            if (!v) return;
+            if (v.paused) { v.play().catch(()=>{}); } else { v.pause(); }
+          }}
+          style={{
+            position:"absolute", bottom:36, right:8,
+            width:32, height:32, borderRadius:"50%",
+            background:"rgba(0,0,0,0.55)", backdropFilter:"blur(6px)",
+            border:"1px solid rgba(255,255,255,0.14)",
+            color:"rgba(255,255,255,0.85)", cursor:"pointer",
+            display:"flex", alignItems:"center", justifyContent:"center",
+            fontSize:12, transition:"all 0.15s",
+            boxShadow:"0 2px 8px rgba(0,0,0,0.55)",
+          }}
+          onMouseEnter={e=>e.currentTarget.style.background="rgba(94,106,210,0.45)"}
+          onMouseLeave={e=>e.currentTarget.style.background="rgba(0,0,0,0.55)"}
+        >
+          {playing ? "⏸" : "▶"}
+        </button>
+        {/* Botón mute/unmute */}
+        <button
+          onClick={() => setMuted(m => !m)}
+          title={muted ? "Activar sonido" : "Silenciar"}
+          style={{
+            position:"absolute", bottom:36, right:46,
+            width:32, height:32, borderRadius:"50%",
+            background:"rgba(0,0,0,0.55)", backdropFilter:"blur(6px)",
+            border:"1px solid rgba(255,255,255,0.14)",
+            color:"rgba(255,255,255,0.85)", cursor:"pointer",
+            display:"flex", alignItems:"center", justifyContent:"center",
+            fontSize:14, transition:"all 0.15s",
+            boxShadow:"0 2px 8px rgba(0,0,0,0.55)",
+          }}
+          onMouseEnter={e=>e.currentTarget.style.background="rgba(94,106,210,0.45)"}
+          onMouseLeave={e=>e.currentTarget.style.background="rgba(0,0,0,0.55)"}
+        >
+          {muted ? "🔇" : "🔊"}
+        </button>
+        {/* Scrub bar */}
+        <div style={{
+          position:"absolute", bottom:0, left:0, right:0,
+          padding:"18px 8px 8px",
+          background:"linear-gradient(transparent, rgba(0,0,0,0.65))",
+        }}>
+          <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+            <span style={{ fontSize:9, color:"rgba(255,255,255,0.55)", fontFamily:"'Inter',sans-serif", fontVariantNumeric:"tabular-nums", flexShrink:0 }}>
+              {fmtTime(currentTime)}
+            </span>
+            <div
+              ref={scrubRef}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                setScrubbing(true);
+                const rect = e.currentTarget.getBoundingClientRect();
+                const x = (e.clientX - rect.left) / rect.width;
+                if (vidRef.current && duration) {
+                  const t = Math.max(0, Math.min(1, x)) * duration;
+                  vidRef.current.currentTime = t;
+                  setCurrentTime(t);
+                }
+              }}
+              style={{ flex:1, height:3, background:"rgba(255,255,255,0.22)", borderRadius:99, cursor:"pointer", position:"relative" }}
+            >
+              <div style={{ height:"100%", width:`${progress}%`, background:"linear-gradient(90deg,#5E6AD2,#818cf8)", borderRadius:99 }} />
+              <div style={{
+                position:"absolute", top:"50%", left:`${progress}%`,
+                transform:"translate(-50%,-50%)",
+                width:10, height:10, borderRadius:"50%",
+                background:"#fff", boxShadow:"0 0 4px rgba(0,0,0,0.5)",
+                pointerEvents:"none",
+              }} />
+            </div>
+            <span style={{ fontSize:9, color:"rgba(255,255,255,0.55)", fontFamily:"'Inter',sans-serif", fontVariantNumeric:"tabular-nums", flexShrink:0 }}>
+              {fmtTime(duration)}
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ── Preview de estilo 1: BIG + small ──
 function StylePreview1({ color = "#FFE033" }) {
@@ -554,6 +756,46 @@ function StylePreviewDoc() {
   );
 }
 
+// ── Preview estilo Retro Classic (fansub anime 90s/2000s) ──
+function StylePreviewRetro() {
+  const blueOutline = [
+    "-2px -2px 0 #1E2D73","2px -2px 0 #1E2D73","-2px 2px 0 #1E2D73","2px 2px 0 #1E2D73",
+    "-2px 0 0 #1E2D73","2px 0 0 #1E2D73","0 -2px 0 #1E2D73","0 2px 0 #1E2D73",
+    "-3px -3px 1px #0F1638","3px -3px 1px #0F1638","-3px 3px 1px #0F1638","3px 3px 1px #0F1638",
+    "0 0 6px rgba(255,210,26,0.20)",
+  ].join(",");
+  return (
+    <div style={{
+      background:"#0a0a0a", borderRadius:"0.85rem",
+      height:130, display:"flex", flexDirection:"column",
+      alignItems:"center", justifyContent:"flex-end",
+      paddingBottom:24, overflow:"hidden", position:"relative",
+    }}>
+      <div style={{position:"absolute",inset:0,background:"linear-gradient(to bottom, #111 0%, #0a0a0a 100%)"}} />
+      <div style={{
+        position:"relative",
+        fontFamily:"'Times New Roman',Times,serif",
+        fontStyle:"italic", fontWeight:"bold",
+        fontSize:16,
+        letterSpacing:"-0.5px",
+        lineHeight:1.2,
+        transform:"scaleX(1.05) scaleY(0.94)",
+        display:"inline-block",
+        background:"linear-gradient(to bottom, #FFE46B 0%, #FFD21A 48%, #E6B800 100%)",
+        WebkitBackgroundClip:"text",
+        WebkitTextFillColor:"transparent",
+        backgroundClip:"text",
+        textShadow: blueOutline,
+        filter:"drop-shadow(1px 2px 3px rgba(0,0,0,0.45))",
+        textAlign:"center",
+        padding:"0 10px",
+      }}>
+        esto es increíble de verdad
+      </div>
+    </div>
+  );
+}
+
 // ── Preview estilo Solo Blanco ──
 function StylePreviewWhite() {
   return (
@@ -578,9 +820,278 @@ function StylePreviewWhite() {
 }
 
 // ── Selector de estilo — vertical (Big Glow / Normal Glow / Solo Blanco) ──
-function StylePicker({ onSelect, onBack }) {
+const FONT_OPTIONS = [
+  { id:"outfit",   label:"Outfit",   sample:"Outfit",   style:{fontFamily:"'Outfit',sans-serif",   fontWeight:700} },
+  { id:"inter",    label:"Inter",    sample:"Inter",    style:{fontFamily:"'Inter',sans-serif",    fontWeight:700} },
+  { id:"raleway",  label:"Raleway",  sample:"Raleway",  style:{fontFamily:"'Raleway',sans-serif",  fontWeight:300} },
+  { id:"playfair", label:"Playfair", sample:"Playfair", style:{fontFamily:"'Playfair Display',serif", fontStyle:"italic", fontWeight:700} },
+];
+const ANIM_OPTIONS = [
+  { id:"default",    label:"Fade Pop",    icon:"✦" },
+  { id:"slide",      label:"Slide Up",    icon:"↑" },
+  { id:"scale",      label:"Scale In",    icon:"⊕" },
+  { id:"bounce",     label:"Rebote",      icon:"◎" },
+];
+
+// ── Mapa de fuentes para el mockup ───────────────────────────────────────────
+const PHONE_FONT_MAP = {
+  outfit:   { ff:"'Outfit',sans-serif",           fw700:900, fw300:300, fsi:"normal" },
+  inter:    { ff:"'Inter',sans-serif",             fw700:700, fw300:400, fsi:"normal" },
+  raleway:  { ff:"'Raleway',sans-serif",           fw700:600, fw300:300, fsi:"normal" },
+  playfair: { ff:"'Playfair Display',serif",       fw700:800, fw300:700, fsi:"italic" },
+};
+
+// ── Phone mockup con caption arrastrable ─────────────────────────────────────
+function PhoneMockup({ style, color, subPos, onPosChange, captFont, captAnim, videoURL }) {
+  const phoneRef  = useRefU(null);
+  const [dragging, setDragging] = useStateU(false);
+  const [animKey,  setAnimKey]  = useStateU(0);
+
+  const PHONE_H = 555;
+  const PHONE_W = 255;
+
+  // Replay animation whenever font or animation type changes
+  useEffectU(() => { setAnimKey(k => k + 1); }, [captFont, captAnim, style, color]);
+
+  useEffectU(() => {
+    if (!dragging) return;
+    const handleMove = (e) => {
+      if (!phoneRef.current) return;
+      const rect = phoneRef.current.getBoundingClientRect();
+      const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+      const y = clientY - rect.top;
+      const pct = Math.round((1 - y / rect.height) * 100);
+      onPosChange(Math.max(5, Math.min(65, pct)));
+    };
+    const handleUp = () => setDragging(false);
+    document.addEventListener("mousemove", handleMove);
+    document.addEventListener("mouseup",   handleUp);
+    document.addEventListener("touchmove", handleMove, { passive: true });
+    document.addEventListener("touchend",  handleUp);
+    return () => {
+      document.removeEventListener("mousemove", handleMove);
+      document.removeEventListener("mouseup",   handleUp);
+      document.removeEventListener("touchmove", handleMove);
+      document.removeEventListener("touchend",  handleUp);
+    };
+  }, [dragging, onPosChange]);
+
+  const captionBottomPx = (subPos / 100) * PHONE_H;
+  const hl = (HIGHLIGHT_COLORS.find(x => x.id === color) || HIGHLIGHT_COLORS[0]);
+  const fm = PHONE_FONT_MAP[captFont] || PHONE_FONT_MAP.outfit;
+
+  // Animation definitions (injected once via <style>)
+  const ANIM_CSS = `
+    @keyframes pcapt-fadepop { from{opacity:0;transform:scale(0.65)} to{opacity:1;transform:scale(1)} }
+    @keyframes pcapt-slide   { from{opacity:0;transform:translateY(18px)} to{opacity:1;transform:translateY(0)} }
+    @keyframes pcapt-scale   { from{opacity:0;transform:scale(0.3)} to{opacity:1;transform:scale(1)} }
+    @keyframes pcapt-bounce  { 0%{opacity:0;transform:scale(0.5) translateY(10px)} 65%{transform:scale(1.1) translateY(-4px)} 100%{opacity:1;transform:scale(1) translateY(0)} }
+  `;
+  const ANIM_NAME = { default:"pcapt-fadepop", slide:"pcapt-slide", scale:"pcapt-scale", bounce:"pcapt-bounce" };
+  const animCSS = `${ANIM_NAME[captAnim] || "pcapt-fadepop"} 0.45s cubic-bezier(.17,.67,.32,1.28) both`;
+
+  const renderCaption = () => {
+    if (!style) return (
+      <div style={{
+        display:"flex", flexDirection:"column", alignItems:"center", gap:6, pointerEvents:"none",
+        background:"rgba(0,0,0,0.45)", backdropFilter:"blur(8px)",
+        padding:"10px 18px", borderRadius:10,
+        border:"1px solid rgba(255,255,255,0.10)",
+      }}>
+        <span style={{ fontFamily:"'Outfit',sans-serif", fontSize:11, color:"rgba(255,255,255,0.45)", textAlign:"center" }}>
+          Elige un estilo →
+        </span>
+      </div>
+    );
+    if (style === "style1") return (
+      <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:0, pointerEvents:"none" }}>
+        <span style={{ fontFamily:fm.ff, fontWeight:fm.fw300, fontStyle:fm.fsi, fontSize:17, color:"rgba(255,255,255,0.92)", textShadow:"0 1px 6px rgba(0,0,0,0.99)" }}>esto es</span>
+        <span style={{ fontFamily:fm.ff, fontWeight:fm.fw700, fontStyle:fm.fsi === "italic" ? "italic" : "normal", fontSize:40, color:hl.id, letterSpacing:-1.5, textTransform:"uppercase", textShadow:`0 0 18px ${hl.glow}, 0 0 36px ${hl.glow}`, lineHeight:1 }}>VIRAL</span>
+        <span style={{ fontFamily:fm.ff, fontWeight:fm.fw300, fontStyle:fm.fsi, fontSize:17, color:"rgba(255,255,255,0.92)", textShadow:"0 1px 6px rgba(0,0,0,0.99)" }}>content</span>
+      </div>
+    );
+    if (style === "style2") return (
+      <span style={{ fontFamily:fm.ff, fontWeight:fm.fw300, fontStyle:fm.fsi, fontSize:21, color:hl.id, textShadow:`0 0 8px ${hl.id}, 0 0 20px ${hl.glow}, 0 0 40px ${hl.glow}`, letterSpacing:0.3, pointerEvents:"none" }}>esto es viral</span>
+    );
+    return (
+      <span style={{ fontFamily:fm.ff, fontWeight:fm.fw700, fontStyle:fm.fsi, fontSize:21, color:"#fff", textShadow:"0 2px 12px rgba(0,0,0,0.99)", pointerEvents:"none" }}>esto es viral</span>
+    );
+  };
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", alignItems:"center", userSelect:"none" }}>
+      <div style={{ fontSize:9, color:"rgba(255,255,255,0.28)", marginBottom:8, fontFamily:"'Inter',sans-serif", letterSpacing:".1em", textTransform:"uppercase" }}>
+        ↕ Arrastra para posicionar
+      </div>
+      <div
+        ref={phoneRef}
+        onMouseDown={(e) => { e.preventDefault(); setDragging(true); }}
+        onTouchStart={() => setDragging(true)}
+        style={{
+          position:"relative", width:PHONE_W, height:PHONE_H,
+          borderRadius:30, background:"#0c0c0f",
+          border:`2px solid ${dragging ? "rgba(94,106,210,0.7)" : "rgba(255,255,255,0.18)"}`,
+          overflow:"hidden", cursor:"ns-resize",
+          boxShadow: dragging
+            ? "0 0 0 3px rgba(94,106,210,0.25), 0 8px 40px rgba(0,0,0,0.80)"
+            : "0 8px 40px rgba(0,0,0,0.80), 0 0 0 1px rgba(255,255,255,0.06)",
+          transition:"border-color 0.15s, box-shadow 0.15s",
+        }}
+      >
+        {/* Keyframe animations */}
+        <style>{ANIM_CSS}</style>
+        {/* Notch */}
+        <div style={{ position:"absolute", top:10, left:"50%", transform:"translateX(-50%)", width:38, height:5, borderRadius:3, background:"rgba(255,255,255,0.20)", zIndex:5 }} />
+        {/* Background: real video or dark gradient fallback */}
+        {videoURL ? (
+          <video
+            src={videoURL}
+            autoPlay muted playsInline loop
+            style={{
+              position:"absolute", inset:0, width:"100%", height:"100%",
+              objectFit:"cover", pointerEvents:"none",
+            }}
+          />
+        ) : (
+          <div style={{ position:"absolute", inset:0, background:"linear-gradient(165deg, #181820 0%, #0c0c0f 100%)" }} />
+        )}
+        {/* Subtle scan lines */}
+        <div style={{ position:"absolute", inset:0, backgroundImage:"repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(255,255,255,0.009) 3px, rgba(255,255,255,0.009) 4px)", pointerEvents:"none", zIndex:1 }} />
+        {/* Caption */}
+        <div
+          key={animKey}
+          style={{
+            position:"absolute", bottom:captionBottomPx, left:0, right:0,
+            display:"flex", justifyContent:"center",
+            padding:"3px 10px",
+            transition: dragging ? "none" : "bottom 0.12s",
+            zIndex:3,
+            animation: animCSS,
+          }}
+        >
+          {renderCaption()}
+        </div>
+        {/* Drag guide line */}
+        {dragging && (
+          <div style={{ position:"absolute", left:10, right:10, bottom:captionBottomPx, height:1.5, background:"rgba(94,106,210,0.80)", boxShadow:"0 0 6px rgba(94,106,210,0.6)", zIndex:4 }} />
+        )}
+      </div>
+      <div style={{ fontSize:10, color:"rgba(94,106,210,0.85)", marginTop:9, fontFamily:"'Outfit',sans-serif", fontWeight:700, letterSpacing:0.5 }}>
+        {subPos}% desde abajo
+      </div>
+    </div>
+  );
+}
+
+// ── Pantalla intermedia tras subir video ─────────────────────────────────────
+function VideoReadyScreen({ file, videoURL, onGenerate, onCustomize, onBack }) {
+  const [muted, setMuted] = useStateU(true);
+  const vidRef = useRefU(null);
+
+  useEffectU(() => {
+    const v = vidRef.current;
+    if (!v || !videoURL) return;
+    v.play().catch(() => {});
+  }, [videoURL]);
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:0 }}>
+      {sectionLabel("Video listo")}
+
+      {/* Video preview */}
+      <div style={{
+        position:"relative", borderRadius:14, overflow:"hidden",
+        boxShadow:"0 0 0 1px rgba(255,255,255,0.09), 0 8px 40px rgba(0,0,0,0.75)",
+        background:"#000", marginBottom:22, maxWidth:340, width:"100%",
+      }}>
+        <video
+          ref={vidRef}
+          src={videoURL}
+          muted={muted}
+          playsInline
+          loop
+          style={{ display:"block", width:"100%", height:"auto", maxHeight:"55vh" }}
+        />
+        <button
+          onClick={() => setMuted(m => !m)}
+          title={muted ? "Activar sonido" : "Silenciar"}
+          style={{
+            position:"absolute", bottom:10, right:10,
+            width:32, height:32, borderRadius:"50%",
+            background:"rgba(0,0,0,0.55)", backdropFilter:"blur(6px)",
+            border:"1px solid rgba(255,255,255,0.14)",
+            color:"rgba(255,255,255,0.85)", cursor:"pointer",
+            display:"flex", alignItems:"center", justifyContent:"center",
+            fontSize:14, transition:"all 0.15s",
+            boxShadow:"0 2px 8px rgba(0,0,0,0.55)",
+          }}
+          onMouseEnter={e=>e.currentTarget.style.background="rgba(94,106,210,0.45)"}
+          onMouseLeave={e=>e.currentTarget.style.background="rgba(0,0,0,0.55)"}
+        >
+          {muted ? "🔇" : "🔊"}
+        </button>
+      </div>
+
+      {/* File name */}
+      <div style={{fontSize:11,color:"rgba(255,255,255,0.32)",fontFamily:"'Inter',sans-serif",marginBottom:26,textAlign:"center",maxWidth:320,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+        {file?.name}
+      </div>
+
+      {/* Action buttons */}
+      <div style={{ display:"flex", gap:12, width:"100%", maxWidth:400 }}>
+        <button
+          onClick={onGenerate}
+          style={{
+            flex:1, padding:"16px 18px", borderRadius:"0.9rem",
+            fontFamily:"'Outfit',sans-serif", fontWeight:700, fontSize:13,
+            letterSpacing:"0.08em", cursor:"pointer", textTransform:"uppercase",
+            background:"linear-gradient(135deg, #4a54c1, #5E6AD2)",
+            color:"#fff", border:"none",
+            boxShadow:"0 0 0 1px rgba(94,106,210,0.50), 0 4px 24px rgba(94,106,210,0.40), inset 0 1px 0 rgba(255,255,255,0.12)",
+            transition:"all 0.22s",
+          }}
+          onMouseEnter={e=>{ e.currentTarget.style.transform="translateY(-1px)"; e.currentTarget.style.boxShadow="0 0 0 1px rgba(94,106,210,0.65), 0 8px 32px rgba(94,106,210,0.55), inset 0 1px 0 rgba(255,255,255,0.18)"; }}
+          onMouseLeave={e=>{ e.currentTarget.style.transform="translateY(0)"; e.currentTarget.style.boxShadow="0 0 0 1px rgba(94,106,210,0.50), 0 4px 24px rgba(94,106,210,0.40), inset 0 1px 0 rgba(255,255,255,0.12)"; }}
+        >
+          ⚡ Generar captions
+        </button>
+        <button
+          onClick={onCustomize}
+          style={{
+            flex:1, padding:"16px 18px", borderRadius:"0.9rem",
+            fontFamily:"'Outfit',sans-serif", fontWeight:700, fontSize:13,
+            letterSpacing:"0.08em", cursor:"pointer", textTransform:"uppercase",
+            background:"rgba(255,255,255,0.05)",
+            color:"rgba(255,255,255,0.72)",
+            border:"1px solid rgba(255,255,255,0.12)",
+            transition:"all 0.22s",
+          }}
+          onMouseEnter={e=>{ e.currentTarget.style.background="rgba(255,255,255,0.09)"; e.currentTarget.style.color="#fff"; e.currentTarget.style.borderColor="rgba(255,255,255,0.22)"; }}
+          onMouseLeave={e=>{ e.currentTarget.style.background="rgba(255,255,255,0.05)"; e.currentTarget.style.color="rgba(255,255,255,0.72)"; e.currentTarget.style.borderColor="rgba(255,255,255,0.12)"; }}
+        >
+          🎨 Personalizar captions
+        </button>
+      </div>
+
+      <div style={{textAlign:"center", marginTop:32}}>
+        <button onClick={onBack} style={{...backBtnStyle,display:"inline-flex",marginBottom:0}}
+          onMouseEnter={e=>e.currentTarget.style.color="rgba(255,255,255,0.65)"}
+          onMouseLeave={e=>e.currentTarget.style.color="rgba(255,255,255,0.35)"}
+        >
+          <ArrowLeft /> Cambiar video
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function StylePicker({ onSelect, onBack, videoURL }) {
   const [selected,      setSelected]      = useStateU(null);
   const [selectedColor, setSelectedColor] = useStateU("#FFE033");
+  const [enableZoom,    setEnableZoom]    = useStateU(true);
+  const [subPos,        setSubPos]        = useStateU(15);
+  const [captFont,      setCaptFont]      = useStateU("outfit");
+  const [captAnim,      setCaptAnim]      = useStateU("default");
 
   const cardStyle = (id) => ({
     flex:1, borderRadius:"1.1rem", overflow:"hidden", cursor:"pointer",
@@ -607,89 +1118,211 @@ function StylePicker({ onSelect, onBack }) {
   });
 
   return (
-    <div>
-      <button onClick={onBack} style={backBtnStyle}
-        onMouseEnter={e=>e.currentTarget.style.color="rgba(255,255,255,0.65)"}
-        onMouseLeave={e=>e.currentTarget.style.color="rgba(255,255,255,0.35)"}
-      >
-        <ArrowLeft /> Volver
-      </button>
-      {sectionLabel("✦ Elige el estilo de captions")}
-      <div style={{display:"flex",gap:8,marginBottom:16}}>
+    <div style={{ display:"flex", gap:0, alignItems:"flex-start" }}>
 
-        {/* Big Glow */}
-        <div style={cardStyle("style1")} onClick={()=>setSelected("style1")}>
-          <div style={{position:"absolute",top:0,left:0,right:0,height:1,background:"linear-gradient(90deg,transparent,rgba(255,255,255,0.10),transparent)",pointerEvents:"none"}} />
-          <StylePreview1 color={selectedColor} />
-          <div style={labelStyle("style1")}>
-            <div>
-              <div style={{fontSize:"0.82rem",fontWeight:600,color:"rgba(255,255,255,0.85)",fontFamily:"'Inter',sans-serif"}}>Big Glow</div>
-              <div style={{fontSize:"0.68rem",color:"rgba(255,255,255,0.32)",fontFamily:"'Inter',sans-serif",marginTop:2}}>Bold · Énfasis grande</div>
-            </div>
-            <div style={radioStyle("style1")}>
-              {selected==="style1" && <span style={{width:7,height:7,borderRadius:"50%",background:"#5E6AD2",display:"block"}} />}
-            </div>
-          </div>
+      {/* ── Columna izquierda: phone mockup SIEMPRE visible ── */}
+      <div style={{
+        flexShrink:0, paddingRight:24, marginRight:24,
+        borderRight:"1px solid rgba(255,255,255,0.07)",
+      }}>
+        <PhoneMockup
+          style={selected}
+          color={selectedColor}
+          subPos={subPos}
+          onPosChange={setSubPos}
+          captFont={captFont}
+          captAnim={captAnim}
+          videoURL={videoURL}
+        />
+      </div>
+
+      {/* ── Columna derecha: todos los controles ── */}
+      <div style={{ flex:1, minWidth:0, display:"flex", flexDirection:"column", gap:0 }}>
+
+        {/* Heading compacto para la columna */}
+        <div style={{
+          fontSize:"clamp(18px, 2.8vw, 36px)",
+          letterSpacing:"-0.02em",
+          color:"rgba(148,155,236,0.95)",
+          fontFamily:"'Outfit',sans-serif", fontWeight:800,
+          marginBottom:20, textTransform:"uppercase",
+          lineHeight:1.05, textAlign:"center",
+          textShadow:"0 0 60px rgba(124,133,224,0.35)",
+        }}>
+          Elige el estilo
         </div>
 
-        {/* Normal Glow */}
-        <div style={cardStyle("style2")} onClick={()=>setSelected("style2")}>
-          <div style={{position:"absolute",top:0,left:0,right:0,height:1,background:"linear-gradient(90deg,transparent,rgba(255,255,255,0.10),transparent)",pointerEvents:"none"}} />
-          <StylePreview2 color={selectedColor} />
-          <div style={labelStyle("style2")}>
-            <div>
-              <div style={{fontSize:"0.82rem",fontWeight:600,color:"rgba(255,255,255,0.85)",fontFamily:"'Inter',sans-serif"}}>Normal Glow</div>
-              <div style={{fontSize:"0.68rem",color:"rgba(255,255,255,0.32)",fontFamily:"'Inter',sans-serif",marginTop:2}}>Itálica · Glow color</div>
-            </div>
-            <div style={radioStyle("style2")}>
-              {selected==="style2" && <span style={{width:7,height:7,borderRadius:"50%",background:"#5E6AD2",display:"block"}} />}
+        {/* 3 tarjetas de estilo */}
+        <div style={{display:"flex",gap:8,marginBottom:16}}>
+
+          {/* Big Glow */}
+          <div style={cardStyle("style1")} onClick={()=>setSelected("style1")}>
+            <div style={{position:"absolute",top:0,left:0,right:0,height:1,background:"linear-gradient(90deg,transparent,rgba(255,255,255,0.10),transparent)",pointerEvents:"none"}} />
+            <StylePreview1 color={selectedColor} />
+            <div style={labelStyle("style1")}>
+              <div>
+                <div style={{fontSize:"0.82rem",fontWeight:600,color:"rgba(255,255,255,0.85)",fontFamily:"'Inter',sans-serif"}}>Big Glow</div>
+                <div style={{fontSize:"0.68rem",color:"rgba(255,255,255,0.32)",fontFamily:"'Inter',sans-serif",marginTop:2}}>Bold · Énfasis grande</div>
+              </div>
+              <div style={radioStyle("style1")}>
+                {selected==="style1" && <span style={{width:7,height:7,borderRadius:"50%",background:"#5E6AD2",display:"block"}} />}
+              </div>
             </div>
           </div>
+
+          {/* Normal Glow */}
+          <div style={cardStyle("style2")} onClick={()=>setSelected("style2")}>
+            <div style={{position:"absolute",top:0,left:0,right:0,height:1,background:"linear-gradient(90deg,transparent,rgba(255,255,255,0.10),transparent)",pointerEvents:"none"}} />
+            <StylePreview2 color={selectedColor} />
+            <div style={labelStyle("style2")}>
+              <div>
+                <div style={{fontSize:"0.82rem",fontWeight:600,color:"rgba(255,255,255,0.85)",fontFamily:"'Inter',sans-serif"}}>Normal Glow</div>
+                <div style={{fontSize:"0.68rem",color:"rgba(255,255,255,0.32)",fontFamily:"'Inter',sans-serif",marginTop:2}}>Itálica · Glow color</div>
+              </div>
+              <div style={radioStyle("style2")}>
+                {selected==="style2" && <span style={{width:7,height:7,borderRadius:"50%",background:"#5E6AD2",display:"block"}} />}
+              </div>
+            </div>
+          </div>
+
+          {/* Solo Blanco */}
+          <div style={cardStyle("style3")} onClick={()=>setSelected("style3")}>
+            <div style={{position:"absolute",top:0,left:0,right:0,height:1,background:"linear-gradient(90deg,transparent,rgba(255,255,255,0.10),transparent)",pointerEvents:"none"}} />
+            <StylePreviewWhite />
+            <div style={labelStyle("style3")}>
+              <div>
+                <div style={{fontSize:"0.82rem",fontWeight:600,color:"rgba(255,255,255,0.85)",fontFamily:"'Inter',sans-serif"}}>Solo Blanco</div>
+                <div style={{fontSize:"0.68rem",color:"rgba(255,255,255,0.32)",fontFamily:"'Inter',sans-serif",marginTop:2}}>Limpio · Sin colores</div>
+              </div>
+              <div style={radioStyle("style3")}>
+                {selected==="style3" && <span style={{width:7,height:7,borderRadius:"50%",background:"#5E6AD2",display:"block"}} />}
+              </div>
+            </div>
+          </div>
+
         </div>
 
-        {/* Solo Blanco */}
-        <div style={cardStyle("style3")} onClick={()=>setSelected("style3")}>
-          <div style={{position:"absolute",top:0,left:0,right:0,height:1,background:"linear-gradient(90deg,transparent,rgba(255,255,255,0.10),transparent)",pointerEvents:"none"}} />
-          <StylePreviewWhite />
-          <div style={labelStyle("style3")}>
-            <div>
-              <div style={{fontSize:"0.82rem",fontWeight:600,color:"rgba(255,255,255,0.85)",fontFamily:"'Inter',sans-serif"}}>Solo Blanco</div>
-              <div style={{fontSize:"0.68rem",color:"rgba(255,255,255,0.32)",fontFamily:"'Inter',sans-serif",marginTop:2}}>Limpio · Sin colores</div>
+        {selected && selected !== "style3" && <ColorPicker value={selectedColor} onChange={setSelectedColor} />}
+
+        {/* Controles avanzados — condicionales a selección */}
+        {selected && (
+          <div style={{ display:"flex", flexDirection:"column", gap:0, paddingTop:4 }}>
+
+            {/* Toggle Zoom */}
+            <div style={{
+              display:"flex", alignItems:"center", justifyContent:"space-between",
+              background:"rgba(255,255,255,0.025)", border:"1px solid rgba(255,255,255,0.07)",
+              borderRadius:"0.7rem", padding:"8px 12px", marginBottom:10,
+            }}>
+              <div>
+                <div style={{fontSize:10,fontWeight:600,color:"rgba(255,255,255,0.72)",fontFamily:"'Inter',sans-serif"}}>Zoom clave</div>
+                <div style={{fontSize:9,color:"rgba(255,255,255,0.32)",fontFamily:"'Inter',sans-serif",marginTop:1}}>Zoom en palabras importantes</div>
+              </div>
+              <button onClick={()=>setEnableZoom(z=>!z)} style={{
+                flexShrink:0, marginLeft:10,
+                width:38, height:21, borderRadius:99, border:"none", cursor:"pointer",
+                background: enableZoom ? "linear-gradient(135deg,#4a54c1,#5E6AD2)" : "rgba(255,255,255,0.10)",
+                position:"relative", transition:"background 0.2s",
+                boxShadow: enableZoom ? "0 0 0 1px rgba(94,106,210,0.50), 0 2px 8px rgba(94,106,210,0.30)" : "none",
+              }}>
+                <span style={{
+                  position:"absolute", top:2.5, left: enableZoom ? 18 : 2.5,
+                  width:16, height:16, borderRadius:"50%", background:"#fff",
+                  transition:"left 0.2s", boxShadow:"0 1px 4px rgba(0,0,0,0.35)",
+                }} />
+              </button>
             </div>
-            <div style={radioStyle("style3")}>
-              {selected==="style3" && <span style={{width:7,height:7,borderRadius:"50%",background:"#5E6AD2",display:"block"}} />}
+
+            {/* Tipografía */}
+            <div style={{
+              background:"rgba(255,255,255,0.025)", border:"1px solid rgba(255,255,255,0.07)",
+              borderRadius:"0.7rem", padding:"8px 12px", marginBottom:10,
+            }}>
+              <div style={{fontSize:10,fontWeight:600,color:"rgba(255,255,255,0.72)",fontFamily:"'Inter',sans-serif",marginBottom:6}}>Tipografía</div>
+              <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                {FONT_OPTIONS.map(f=>(
+                  <button key={f.id} onClick={()=>setCaptFont(f.id)} style={{
+                    padding:"4px 9px", borderRadius:6, border:"none", cursor:"pointer",
+                    background: captFont===f.id ? "rgba(94,106,210,0.30)" : "rgba(255,255,255,0.06)",
+                    color: captFont===f.id ? "#fff" : "rgba(255,255,255,0.50)",
+                    fontSize:11, ...f.style,
+                    outline: captFont===f.id ? "1px solid rgba(94,106,210,0.55)" : "1px solid transparent",
+                    transition:"all 0.15s",
+                  }}>{f.sample}</button>
+                ))}
+              </div>
             </div>
+
+            {/* Animación */}
+            <div style={{
+              background:"rgba(255,255,255,0.025)", border:"1px solid rgba(255,255,255,0.07)",
+              borderRadius:"0.7rem", padding:"8px 12px", marginBottom:0,
+            }}>
+              <div style={{fontSize:10,fontWeight:600,color:"rgba(255,255,255,0.72)",fontFamily:"'Inter',sans-serif",marginBottom:6}}>Animación</div>
+              <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                {ANIM_OPTIONS.map(a=>(
+                  <button key={a.id} onClick={()=>setCaptAnim(a.id)} style={{
+                    padding:"4px 9px", borderRadius:6, border:"none", cursor:"pointer",
+                    background: captAnim===a.id ? "rgba(94,106,210,0.30)" : "rgba(255,255,255,0.06)",
+                    color: captAnim===a.id ? "#fff" : "rgba(255,255,255,0.50)",
+                    fontFamily:"'Inter',sans-serif", fontSize:11,
+                    outline: captAnim===a.id ? "1px solid rgba(94,106,210,0.55)" : "1px solid transparent",
+                    transition:"all 0.15s",
+                  }}>{a.icon} {a.label}</button>
+                ))}
+              </div>
+            </div>
+
           </div>
+        )}
+
+        {/* Spacer */}
+        {selected && <div style={{ height:14 }} />}
+
+        <button
+          onClick={()=>{ if(selected) onSelect(selected, selected === "style3" ? "#FFFFFF" : selectedColor, enableZoom, subPos, captFont, captAnim); }}
+          disabled={!selected}
+          style={{
+            width:"100%", padding:"14px", borderRadius:"0.9rem",
+            fontFamily:"'Outfit',sans-serif", fontWeight:700, fontSize:14,
+            letterSpacing:1.5, cursor: selected ? "pointer" : "not-allowed",
+            background: selected ? "linear-gradient(135deg, #4a54c1, #5E6AD2)" : "rgba(255,255,255,0.04)",
+            color: selected ? "#fff" : "rgba(255,255,255,0.22)",
+            border: selected ? "none" : "1px solid rgba(255,255,255,0.07)",
+            boxShadow: selected
+              ? "0 0 0 1px rgba(94,106,210,0.50), 0 4px 24px rgba(94,106,210,0.40), inset 0 1px 0 rgba(255,255,255,0.12)"
+              : "none",
+            transition:"all 0.22s",
+            position:"relative", overflow:"hidden",
+          }}
+        >
+          EMPEZAR →
+        </button>
+        <div style={{textAlign:"center", marginTop:44}}>
+          <button onClick={onBack} style={{...backBtnStyle,display:"inline-flex",marginBottom:0}}
+            onMouseEnter={e=>e.currentTarget.style.color="rgba(255,255,255,0.65)"}
+            onMouseLeave={e=>e.currentTarget.style.color="rgba(255,255,255,0.35)"}
+          >
+            <ArrowLeft /> Volver
+          </button>
         </div>
 
       </div>
-      {selected && selected !== "style3" && <ColorPicker value={selectedColor} onChange={setSelectedColor} />}
-      <button
-        onClick={()=>{ if(selected) onSelect(selected, selected === "style3" ? "#FFFFFF" : selectedColor); }}
-        disabled={!selected}
-        style={{
-          width:"100%", padding:"14px", borderRadius:"0.9rem",
-          fontFamily:"'Outfit',sans-serif", fontWeight:700, fontSize:14,
-          letterSpacing:1.5, cursor: selected ? "pointer" : "not-allowed",
-          background: selected ? "linear-gradient(135deg, #4a54c1, #5E6AD2)" : "rgba(255,255,255,0.04)",
-          color: selected ? "#fff" : "rgba(255,255,255,0.22)",
-          border: selected ? "none" : "1px solid rgba(255,255,255,0.07)",
-          boxShadow: selected
-            ? "0 0 0 1px rgba(94,106,210,0.50), 0 4px 24px rgba(94,106,210,0.40), inset 0 1px 0 rgba(255,255,255,0.12)"
-            : "none",
-          transition:"all 0.22s",
-          position:"relative", overflow:"hidden",
-        }}
-      >
-        EMPEZAR →
-      </button>
     </div>
   );
 }
 
+const SFX_OPTIONS = [
+  { id:"none",       label:"Sin sonido",  icon:"○" },
+  { id:"whoosh",     label:"Whoosh",      icon:"↑" },
+  { id:"pop",        label:"Pop",         icon:"✦" },
+  { id:"cinematic",  label:"Cinemático",  icon:"♬" },
+];
+
 // ── Selector de estilo — horizontal (Documental Style / Fancy Creative) ──
 function StylePickerHorizontal({ onSelect, onBack }) {
   const [selected, setSelected] = useStateU(null);
+  const [sfxPack,  setSfxPack]  = useStateU("none");
 
   const cardStyle = (id, disabled) => ({
     flex:1, borderRadius:"1.1rem", overflow:"hidden",
@@ -706,13 +1339,7 @@ function StylePickerHorizontal({ onSelect, onBack }) {
 
   return (
     <div>
-      <button onClick={onBack} style={backBtnStyle}
-        onMouseEnter={e=>e.currentTarget.style.color="rgba(255,255,255,0.65)"}
-        onMouseLeave={e=>e.currentTarget.style.color="rgba(255,255,255,0.35)"}
-      >
-        <ArrowLeft /> Volver
-      </button>
-      {sectionLabel("✦ Elige el estilo de captions")}
+      {sectionLabel("Elige el estilo de captions")}
       <div style={{display:"flex",gap:10,marginBottom:16}}>
 
         {/* Documental Style */}
@@ -736,36 +1363,57 @@ function StylePickerHorizontal({ onSelect, onBack }) {
           </div>
         </div>
 
-        {/* Fancy Creative — próximamente */}
-        <div style={cardStyle("fancy_creative", true)}>
+        {/* Retro Classic — NUEVO */}
+        <div style={cardStyle("style_retro", false)} onClick={()=>setSelected("style_retro")}>
           <div style={{position:"absolute",top:0,left:0,right:0,height:1,background:"linear-gradient(90deg,transparent,rgba(255,255,255,0.10),transparent)",pointerEvents:"none"}} />
-          <div style={{
-            background:"#0a0a0a", borderRadius:"0.85rem",
-            height:130, display:"flex", flexDirection:"column",
-            alignItems:"center", justifyContent:"center",
-            overflow:"hidden", position:"relative",
-          }}>
-            <div style={{position:"absolute",inset:0,background:"linear-gradient(to bottom, #111 0%, #0a0a0a 100%)"}} />
-            <span style={{position:"relative",fontSize:28,opacity:0.18}}>✦</span>
-          </div>
+          <StylePreviewRetro />
           <div style={{padding:"10px 14px 12px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
             <div>
-              <div style={{fontSize:"0.82rem",fontWeight:600,color:"rgba(255,255,255,0.85)",fontFamily:"'Inter',sans-serif"}}>Fancy Creative</div>
-              <div style={{fontSize:"0.68rem",color:"rgba(255,255,255,0.32)",fontFamily:"'Inter',sans-serif",marginTop:2}}>Próximamente</div>
+              <div style={{fontSize:"0.82rem",fontWeight:600,color:"rgba(255,255,255,0.85)",fontFamily:"'Inter',sans-serif"}}>Retro Classic</div>
+              <div style={{fontSize:"0.68rem",color:"rgba(255,255,255,0.32)",fontFamily:"'Inter',sans-serif",marginTop:2}}>Serif itálica · Dorado · Borde negro</div>
             </div>
-            <span style={{
-              fontSize:"0.55rem",fontFamily:"'Outfit',sans-serif",fontWeight:700,
-              letterSpacing:"0.10em",textTransform:"uppercase",
-              color:"rgba(148,155,236,0.70)",
-              background:"rgba(94,106,210,0.10)",border:"1px solid rgba(94,106,210,0.18)",
-              borderRadius:99,padding:"2px 8px",
-            }}>SOON</span>
+            <div style={{
+              width:18,height:18,borderRadius:"50%",flexShrink:0,
+              border: selected==="style_retro" ? "1.5px solid #5E6AD2" : "1px solid rgba(255,255,255,0.15)",
+              background: selected==="style_retro" ? "rgba(94,106,210,0.15)" : "transparent",
+              display:"flex",alignItems:"center",justifyContent:"center",
+              transition:"all 0.18s",
+            }}>
+              {selected==="style_retro" && <span style={{width:7,height:7,borderRadius:"50%",background:"#5E6AD2",display:"block"}} />}
+            </div>
           </div>
         </div>
 
       </div>
+      {/* Sonidos de efecto */}
+      {selected && (
+        <div style={{
+          background:"rgba(255,255,255,0.025)", border:"1px solid rgba(255,255,255,0.07)",
+          borderRadius:"0.7rem", padding:"10px 14px", marginBottom:14,
+        }}>
+          <div style={{fontSize:11,fontWeight:600,color:"rgba(255,255,255,0.72)",fontFamily:"'Inter',sans-serif",marginBottom:8}}>Sonido</div>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+            {SFX_OPTIONS.map(s=>(
+              <button key={s.id} onClick={()=>setSfxPack(s.id)} style={{
+                padding:"5px 11px", borderRadius:6, border:"none", cursor:"pointer",
+                background: sfxPack===s.id ? "rgba(94,106,210,0.30)" : "rgba(255,255,255,0.06)",
+                color: sfxPack===s.id ? "#fff" : "rgba(255,255,255,0.50)",
+                fontFamily:"'Inter',sans-serif", fontSize:12,
+                outline: sfxPack===s.id ? "1px solid rgba(94,106,210,0.55)" : "1px solid transparent",
+                transition:"all 0.15s",
+              }}>{s.icon} {s.label}</button>
+            ))}
+          </div>
+          {sfxPack !== "none" && (
+            <div style={{marginTop:7,fontSize:10,color:"rgba(255,255,255,0.28)",fontFamily:"'Inter',sans-serif"}}>
+              ℹ SFX requiere assets de audio — próximamente disponibles
+            </div>
+          )}
+        </div>
+      )}
+
       <button
-        onClick={()=>{ if(selected) onSelect(selected); }}
+        onClick={()=>{ if(selected) onSelect(selected, "#FFE033", true, 15, "outfit", "default", sfxPack); }}
         disabled={!selected}
         style={{
           width:"100%", padding:"14px", borderRadius:"0.9rem",
@@ -783,6 +1431,14 @@ function StylePickerHorizontal({ onSelect, onBack }) {
       >
         EMPEZAR →
       </button>
+      <div style={{textAlign:"center", marginTop:44}}>
+        <button onClick={onBack} style={{...backBtnStyle,display:"inline-flex",marginBottom:0}}
+          onMouseEnter={e=>e.currentTarget.style.color="rgba(255,255,255,0.65)"}
+          onMouseLeave={e=>e.currentTarget.style.color="rgba(255,255,255,0.35)"}
+        >
+          <ArrowLeft /> Volver
+        </button>
+      </div>
     </div>
   );
 }
@@ -830,13 +1486,7 @@ function WhisperModelPicker({ onSelect, onBack }) {
 
   return (
     <div>
-      <button onClick={onBack} style={backBtnStyle}
-        onMouseEnter={e=>e.currentTarget.style.color="rgba(255,255,255,0.65)"}
-        onMouseLeave={e=>e.currentTarget.style.color="rgba(255,255,255,0.35)"}
-      >
-        <ArrowLeft /> Volver
-      </button>
-      {sectionLabel("✦ ¿Qué modelo quieres utilizar?")}
+      {sectionLabel("¿Qué modelo quieres utilizar?")}
       <div style={{display:"flex",gap:10,marginBottom:16}}>
 
         {/* Whisper Medium */}
@@ -915,15 +1565,23 @@ function WhisperModelPicker({ onSelect, onBack }) {
       >
         EMPEZAR →
       </button>
+      <div style={{textAlign:"center", marginTop:44}}>
+        <button onClick={onBack} style={{...backBtnStyle,display:"inline-flex",marginBottom:0}}
+          onMouseEnter={e=>e.currentTarget.style.color="rgba(255,255,255,0.65)"}
+          onMouseLeave={e=>e.currentTarget.style.color="rgba(255,255,255,0.35)"}
+        >
+          <ArrowLeft /> Volver
+        </button>
+      </div>
     </div>
   );
 }
 
 // ── Selector de tipo de contenido ──
-function ContentTypeSelector({ onSelect }) {
+function ContentTypeSelector({ onSelect, onBack }) {
   return (
     <div>
-      {sectionLabel("✦ ¿Qué tipo de contenido?")}
+      {sectionLabel("¿Qué tipo de contenido?")}
       <div style={{display:"flex",gap:12}}>
         <ModeCard
           icon={<PortraitIcon/>}
@@ -938,12 +1596,150 @@ function ContentTypeSelector({ onSelect }) {
           onClick={()=>onSelect('horizontal')}
         />
       </div>
+      <div style={{textAlign:"center", marginTop:44}}>
+        <button onClick={onBack} style={{...backBtnStyle,display:"inline-flex",marginBottom:0}}
+          onMouseEnter={e=>e.currentTarget.style.color="rgba(255,255,255,0.65)"}
+          onMouseLeave={e=>e.currentTarget.style.color="rgba(255,255,255,0.35)"}
+        >
+          <ArrowLeft /> Volver
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Tarjeta de sector (disponible o bloqueada) ── diseño horizontal
+function SectorCard({ icon, number, title, desc, available, onClick }) {
+  const [hover, setHover] = useStateU(false);
+  const active = available && hover;
+  return (
+    <div
+      onClick={available ? onClick : undefined}
+      onMouseEnter={()=>setHover(true)}
+      onMouseLeave={()=>setHover(false)}
+      style={{
+        borderRadius:"1.3rem", padding:"26px 32px",
+        cursor: available ? "pointer" : "default",
+        background: active ? "rgba(94,106,210,0.08)" : available ? "rgba(255,255,255,0.03)" : "rgba(255,255,255,0.015)",
+        border: active ? "1px solid rgba(94,106,210,0.35)" : available ? "1px solid rgba(255,255,255,0.08)" : "1px solid rgba(255,255,255,0.04)",
+        backdropFilter:"blur(20px)", WebkitBackdropFilter:"blur(20px)",
+        transition:"all 0.22s ease",
+        boxShadow: active
+          ? "0 0 0 1px rgba(255,255,255,0.10), 0 12px 50px rgba(0,0,0,0.55), 0 0 80px rgba(94,106,210,0.12)"
+          : "0 0 0 1px rgba(255,255,255,0.04), 0 4px 24px rgba(0,0,0,0.35)",
+        display:"flex", flexDirection:"row", alignItems:"center", gap:26,
+        opacity: available ? 1 : 0.42,
+        position:"relative", overflow:"hidden",
+      }}
+    >
+      {/* top edge highlight */}
+      <div style={{position:"absolute",top:0,left:0,right:0,height:1,background:"linear-gradient(90deg,transparent,rgba(255,255,255,0.09),transparent)",pointerEvents:"none"}} />
+
+      {/* Icono */}
+      <div style={{
+        width:66, height:66, borderRadius:"1.1rem", flexShrink:0,
+        background: active ? "rgba(94,106,210,0.15)" : "rgba(255,255,255,0.05)",
+        border:"1px solid rgba(255,255,255,0.08)",
+        display:"flex", alignItems:"center", justifyContent:"center",
+        color: active ? "#7C85E0" : "rgba(255,255,255,0.55)",
+        transition:"all 0.22s", fontSize:26,
+        boxShadow: active ? "0 0 20px rgba(94,106,210,0.20)" : "none",
+      }}>
+        {icon}
+      </div>
+
+      {/* Texto */}
+      <div style={{flex:1, minWidth:0, textAlign:"center"}}>
+        <div style={{fontSize:"0.68rem",color:"rgba(255,255,255,0.25)",fontFamily:"'Outfit',sans-serif",fontWeight:500,letterSpacing:"0.18em",textTransform:"uppercase",marginBottom:5}}>
+          {String(number).padStart(2,"0")}
+        </div>
+        <div style={{fontSize:"1.1rem",fontWeight:600,color:active?"#EDEDEF":"rgba(255,255,255,0.80)",fontFamily:"'Inter',sans-serif",marginBottom:5,transition:"color 0.22s"}}>
+          {title}
+        </div>
+        <div style={{fontSize:"0.80rem",color:"rgba(255,255,255,0.35)",fontFamily:"'Inter',sans-serif",lineHeight:1.5}}>
+          {desc}
+        </div>
+      </div>
+
+      {/* Derecha */}
+      <div style={{flexShrink:0, width:110, display:"flex", justifyContent:"flex-end", alignItems:"center"}}>
+        {!available ? (
+          <span style={{
+            fontSize:9, letterSpacing:1.6,
+            color:"rgba(255,255,255,0.28)",
+            fontFamily:"'Outfit',sans-serif", fontWeight:600,
+            padding:"5px 11px",
+            background:"rgba(255,255,255,0.04)",
+            borderRadius:99,
+            border:"1px solid rgba(255,255,255,0.08)",
+            textTransform:"uppercase", whiteSpace:"nowrap",
+          }}>Próximamente</span>
+        ) : (
+          <span style={{
+            fontSize:22,
+            color: active ? "rgba(124,133,224,0.90)" : "rgba(255,255,255,0.18)",
+            transition:"all 0.22s",
+            display:"inline-block",
+            transform: active ? "translateX(5px)" : "translateX(0)",
+          }}>→</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Selector de sector ──
+function SectorSelector({ onSelect, onBack }) {
+  return (
+    <div>
+      {sectionLabel("¿En qué quieres trabajar?")}
+      <div style={{display:"flex",flexDirection:"column",gap:12}}>
+        <SectorCard
+          number={1}
+          icon="✂"
+          title="Shorts & Subtítulos"
+          desc="Añade captions automáticos y genera clips virales con IA"
+          available={true}
+          onClick={()=>onSelect('shorts')}
+        />
+        <SectorCard
+          number={2}
+          icon="♪"
+          title="Sincronización de Audio"
+          desc="Alinea pistas, beats y efectos sonoros con tu vídeo"
+          available={false}
+        />
+        <SectorCard
+          number={3}
+          icon="◫"
+          title="Gestión de Proyectos"
+          desc="Organiza tus vídeos, assets y exportaciones en un solo lugar"
+          available={false}
+        />
+        <SectorCard
+          number={4}
+          icon="⬡"
+          title="Edición de Vídeo IA"
+          desc="Animaciones HyperFrames, transiciones generativas y efectos con IA"
+          available={false}
+        />
+      </div>
+      {/* Volver — debajo de las tarjetas */}
+      <div style={{textAlign:"center", marginTop:44}}>
+        <button onClick={onBack} style={{...backBtnStyle,display:"inline-flex",marginBottom:0}}
+          onMouseEnter={e=>e.currentTarget.style.color="rgba(255,255,255,0.65)"}
+          onMouseLeave={e=>e.currentTarget.style.color="rgba(255,255,255,0.35)"}
+        >
+          <ArrowLeft /> Volver
+        </button>
+      </div>
     </div>
   );
 }
 
 // ══════════════════════════════════════════════════════
-function Uploader({ delay = 0 }) {
+function Uploader({ delay = 0, onDone, onBack }) {
+  const [sector,      setSector]      = useStateU(null); // null | 'picking' | 'shorts'
   const [contentType, setContentType] = useStateU(null); // null | 'vertical' | 'horizontal'
   const [mode, setMode] = useStateU(null);               // null | 'subtitles' | 'clips'
 
@@ -978,21 +1774,66 @@ function Uploader({ delay = 0 }) {
   const [pendingStyle,  setPendingStyle]  = useStateU(null); // set after style, before model
   const [pendingColor,  setPendingColor]  = useStateU("#FFE033");
   const pendingColorRef = useRefU("#FFE033"); // ref síncrono — evita stale closure al leer color
+  const [pendingZoom,   setPendingZoom]   = useStateU(true);
+  const pendingZoomRef  = useRefU(true);
+  const [pendingPos,    setPendingPos]    = useStateU(15);
+  const pendingPosRef   = useRefU(15);
+  const [pendingFont,   setPendingFont]   = useStateU("outfit");
+  const pendingFontRef  = useRefU("outfit");
+  const [pendingAnim,   setPendingAnim]   = useStateU("default");
+  const pendingAnimRef  = useRefU("default");
+  const [pendingSfx,    setPendingSfx]    = useStateU("none");
+  const pendingSfxRef   = useRefU("none");
   const [captionStyle,  setCaptionStyle]  = useStateU(null);
   const [whisperModel,  setWhisperModel]  = useStateU(null);
+  const [pendingVideoURL, setPendingVideoURL] = useStateU(null);
+  const pendingVideoURLRef = useRefU(null);
+  const [videoReadyPhase,  setVideoReadyPhase]  = useStateU(null); // null | "preview"
+
+  // Re-render state (tras APLICAR CAMBIOS en VideoEditor)
+  const [rerendering,      setRerendering]      = useStateU(false);
+  const [rerenderProgress, setRerenderProgress] = useStateU(0);
+  const rrEsRef = useRefU(null);
 
   const [dragOver, setDragOver] = useStateU(false);
-  const inputRef = useRefU(null);
+  const inputRef  = useRefU(null);
+  const subEsRef        = useRefU(null); // EventSource activo para subtítulos
+  const clipEsRef       = useRefU(null); // EventSource activo para clips
+  const renderTimerRef  = useRefU(null); // Timer de animación para el paso de render
+
+  // ── Animación client-side para el paso de render (step 4) ──
+  // Si el backend no envía RENDER_PCT, el bar sube igualmente de forma gradual
+  useEffectU(() => {
+    if (subStep === 4 && subPhase === "processing") {
+      // Limpiar timer previo si existe
+      if (renderTimerRef.current) clearInterval(renderTimerRef.current);
+      renderTimerRef.current = setInterval(() => {
+        setSubBar(prev => {
+          if (prev >= 98) { clearInterval(renderTimerRef.current); return 98; }
+          return prev + 0.4; // ~90 segundos para llegar de 92 a 98
+        });
+      }, 250);
+    } else {
+      if (renderTimerRef.current) { clearInterval(renderTimerRef.current); renderTimerRef.current = null; }
+    }
+    return () => { if (renderTimerRef.current) clearInterval(renderTimerRef.current); };
+  }, [subStep, subPhase]);
 
   // ── Reset completo → vuelve a ContentTypeSelector ──
   const resetAll = () => {
+    if (rrEsRef.current) { rrEsRef.current.close(); rrEsRef.current = null; }
+    setRerendering(false); setRerenderProgress(0);
+    setSector(null);
+    onBack && onBack();
     setContentType(null);
     setMode(null);
     setSubPhase("idle"); setSubStep(-1); setSubBar(0); setSubFile(null); setSubJobId(null); setSubError("");
     setClipPhase("idle"); setClipStep(-1); setClipBar(0); setClipFile(null); setClipJobId(null); setClipError("");
     setTotalClips(0); setCurClipIdx(0); setCurClipTitle(""); setDoneClips([]);
     setClipVideoType(null); setClipPipPos('bottom-right'); setClipDurRange('medium');
-    setPendingFile(null); setPendingMode(null); setPendingStyle(null); setPendingColor("#FFE033"); setCaptionStyle(null); setWhisperModel(null);
+    setPendingFile(null); setPendingMode(null); setPendingStyle(null); setPendingColor("#FFE033"); setPendingZoom(true); pendingZoomRef.current=true; setPendingPos(15); pendingPosRef.current=15; setPendingFont("outfit"); pendingFontRef.current="outfit"; setPendingAnim("default"); pendingAnimRef.current="default"; setPendingSfx("none"); pendingSfxRef.current="none"; setCaptionStyle(null); setWhisperModel(null);
+    if(pendingVideoURLRef.current) { URL.revokeObjectURL(pendingVideoURLRef.current); pendingVideoURLRef.current = null; }
+    setPendingVideoURL(null); setVideoReadyPhase(null);
     setDragOver(false);
     if(inputRef.current) inputRef.current.value="";
   };
@@ -1001,12 +1842,14 @@ function Uploader({ delay = 0 }) {
   const backToModeSelect = () => {
     setMode(null);
     setPendingFile(null); setPendingMode(null);
+    if(pendingVideoURLRef.current) { URL.revokeObjectURL(pendingVideoURLRef.current); pendingVideoURLRef.current = null; }
+    setPendingVideoURL(null); setVideoReadyPhase(null);
     setDragOver(false);
     if(inputRef.current) inputRef.current.value="";
   };
 
   // ── Upload subtítulos ──
-  const startSub = useCallbackU(async (file, style, orientation = "vertical", wModel = "medium", highlightColor = "#FFE033") => {
+  const startSub = useCallbackU(async (file, style, orientation = "vertical", wModel = "medium", highlightColor = "#FFE033", enableZoom = true, captionPos = 15, font = "outfit", anim = "default") => {
     setSubFile(file.name); setSubPhase("processing"); setSubStep(0); setSubBar(5);
     const fd=new FormData();
     fd.append("file", file);
@@ -1014,21 +1857,28 @@ function Uploader({ delay = 0 }) {
     fd.append("orientation", orientation);
     fd.append("whisper_model", wModel);
     fd.append("highlight_color", highlightColor);
+    fd.append("enable_zoom", enableZoom ? "true" : "false");
+    fd.append("caption_pos", String(captionPos));
+    fd.append("caption_font", font);
+    fd.append("caption_anim", anim);
     let jId;
     try { const r=await fetch("/upload",{method:"POST",body:fd}); const d=await r.json(); jId=d.job_id; setSubJobId(jId); }
     catch(e){ setSubPhase("error"); setSubError("No se pudo conectar."); return; }
     const es=new EventSource(`/progress/${jId}`);
+    subEsRef.current = es;
     es.onmessage=(e)=>{
       const msg=e.data; if(msg==="KEEPALIVE") return;
+      if(msg==="CANCELLED"){ es.close(); subEsRef.current=null; setSubPhase("idle"); setSubStep(-1); setSubBar(0); setSubFile(null); setSubJobId(null); return; }
+      if(msg.startsWith("RENDER_PCT:")){ const p=parseInt(msg.replace("RENDER_PCT:",""),10); if(!isNaN(p)) setSubBar(p); return; }
       for(const [k,i] of Object.entries(SUB_STEP_MAP)) if(msg.startsWith(k)){ setSubStep(i); setSubBar(SUB_BAR_MAP[i]||10); return; }
-      if(msg.startsWith("DONE")){ es.close(); setSubStep(99); setSubBar(100); setTimeout(()=>setSubPhase("done"),500); return; }
-      if(msg.startsWith("ERROR:")){ es.close(); setSubPhase("error"); setSubError(msg.replace("ERROR:","")); }
+      if(msg.startsWith("DONE")){ es.close(); subEsRef.current=null; setSubStep(99); setSubBar(100); setTimeout(()=>{ setSubPhase("done"); onDone && onDone(); },500); return; }
+      if(msg.startsWith("ERROR:")){ es.close(); subEsRef.current=null; setSubPhase("error"); setSubError(msg.replace("ERROR:","")); }
     };
-    es.onerror=()=>{ es.close(); setSubPhase("error"); setSubError("Conexión cortada — revisa que el servidor siga corriendo."); };
+    es.onerror=()=>{ es.close(); subEsRef.current=null; setSubPhase("error"); setSubError("Conexión cortada — revisa que el servidor siga corriendo."); };
   },[]);
 
   // ── Upload clips ──
-  const startClips = useCallbackU(async (file, style, wModel = "medium", highlightColor = "#FFE033") => {
+  const startClips = useCallbackU(async (file, style, wModel = "medium", highlightColor = "#FFE033", sfxPack = "none") => {
     setClipFile(file.name); setClipPhase("processing"); setClipStep(0); setClipBar(5);
     const fd=new FormData();
     fd.append("file", file);
@@ -1038,12 +1888,15 @@ function Uploader({ delay = 0 }) {
     fd.append("clip_dur_range",  clipDurRange);
     fd.append("whisper_model",   wModel);
     fd.append("highlight_color", highlightColor);
+    fd.append("sfx_pack",        sfxPack);
     let jId;
     try { const r=await fetch("/upload-clips",{method:"POST",body:fd}); const d=await r.json(); jId=d.job_id; setClipJobId(jId); }
     catch(e){ setClipPhase("error"); setClipError("No se pudo conectar."); return; }
     const es=new EventSource(`/progress-clips/${jId}`);
+    clipEsRef.current = es;
     es.onmessage=(e)=>{
       const msg=e.data; if(msg==="KEEPALIVE") return;
+      if(msg==="CANCELLED"){ es.close(); clipEsRef.current=null; setClipPhase("idle"); setClipStep(-1); setClipBar(0); setClipFile(null); setClipJobId(null); setTotalClips(0); setCurClipIdx(0); setCurClipTitle(""); return; }
       if(msg.startsWith("CSTEP:1")){ setClipStep(0); setClipBar(8);  return; }
       if(msg.startsWith("CSTEP:2")){ setClipStep(1); setClipBar(18); return; }
       if(msg.startsWith("CSTEP:3")){ setClipStep(2); setClipBar(28); return; }
@@ -1056,14 +1909,14 @@ function Uploader({ delay = 0 }) {
       }
       if(msg.startsWith("CCLIP_DONE:")){ const p=msg.split(":"); setClipBar(32+Math.round((parseInt(p[1])||1)/(parseInt(p[2])||1)*62)); return; }
       if(msg.startsWith("CDONE:")){
-        es.close(); setClipBar(100);
+        es.close(); clipEsRef.current=null; setClipBar(100);
         try{ setDoneClips(JSON.parse(msg.replace("CDONE:","")));} catch(_){}
         setTimeout(()=>setClipPhase("done"),500); return;
       }
-      if(msg.startsWith("ERROR:")){ es.close(); setClipPhase("error"); setClipError(msg.replace("ERROR:","")); }
+      if(msg.startsWith("ERROR:")){ es.close(); clipEsRef.current=null; setClipPhase("error"); setClipError(msg.replace("ERROR:","")); }
     };
     es.onerror=async ()=>{
-      es.close();
+      es.close(); clipEsRef.current=null;
       setClipPhase("error");
       setClipError("Conexión cortada — revisa la consola del servidor para ver el error exacto.");
     };
@@ -1072,25 +1925,50 @@ function Uploader({ delay = 0 }) {
   const onFiles = (files) => {
     const f=files[0];
     if(!f.type.startsWith("video/")&&!/\.(mp4|mov|mkv)$/i.test(f.name)) return;
+    // Revoke previous object URL if any
+    if(pendingVideoURLRef.current) { URL.revokeObjectURL(pendingVideoURLRef.current); }
+    const url = URL.createObjectURL(f);
+    pendingVideoURLRef.current = url;
+    setPendingVideoURL(url);
     setPendingFile(f);
     // Para horizontal siempre es "horizontal-subtitles"; para vertical, usa el modo actual
     setPendingMode(contentType === 'horizontal' ? "horizontal-subtitles" : mode);
+    setVideoReadyPhase("preview");
     if(inputRef.current) inputRef.current.value="";
   };
 
-  const onStyleSelected = (style, color = "#FFE033") => {
+  const onStyleSelected = (style, color = "#FFE033", zoom = true, pos = 15, font = "outfit", anim = "default", sfx = "none") => {
     setCaptionStyle(style);
     setPendingStyle(style);
-    pendingColorRef.current = color; // actualización síncrona — sin stale closure
+    pendingColorRef.current = color;
     setPendingColor(color);
+    pendingZoomRef.current = zoom;
+    setPendingZoom(zoom);
+    pendingPosRef.current = pos;
+    setPendingPos(pos);
+    pendingFontRef.current = font;
+    setPendingFont(font);
+    pendingAnimRef.current = anim;
+    setPendingAnim(anim);
+    pendingSfxRef.current = sfx;
+    setPendingSfx(sfx);
   };
 
   const onStyleBack = () => {
-    setPendingFile(null);
-    setPendingMode(null);
+    // Return to the video-ready preview screen (keep file + mode, just reset style choices)
+    setVideoReadyPhase("preview");
     setPendingStyle(null);
     setPendingColor("#FFE033");
-    if(inputRef.current) inputRef.current.value="";
+    setPendingZoom(true);
+    pendingZoomRef.current = true;
+    setPendingPos(15);
+    pendingPosRef.current = 15;
+    setPendingFont("outfit");
+    pendingFontRef.current = "outfit";
+    setPendingAnim("default");
+    pendingAnimRef.current = "default";
+    setPendingSfx("none");
+    pendingSfxRef.current = "none";
   };
 
   const onModelSelected = (model) => {
@@ -1098,20 +1976,80 @@ function Uploader({ delay = 0 }) {
     const f = pendingFile;
     const m = pendingMode;
     const s = pendingStyle;
-    const c = pendingColorRef.current; // leer del ref síncrono, no del estado que puede estar desactualizado
+    const c = pendingColorRef.current;
+    const z = pendingZoomRef.current;
+    const p = pendingPosRef.current;
+    const fn  = pendingFontRef.current;
+    const an  = pendingAnimRef.current;
+    const sfx = pendingSfxRef.current;
     setPendingFile(null);
     setPendingMode(null);
     setPendingStyle(null);
     setPendingColor("#FFE033");
     pendingColorRef.current = "#FFE033";
-    if(m === "horizontal-subtitles") startSub(f, s, "horizontal", model, c);
-    else if(m === "subtitles")       startSub(f, s, "vertical",   model, c);
-    else                             startClips(f, s, model, c);
+    pendingZoomRef.current = true;
+    pendingPosRef.current = 15;
+    pendingFontRef.current = "outfit";
+    pendingAnimRef.current = "default";
+    pendingSfxRef.current  = "none";
+    if(pendingVideoURLRef.current) { URL.revokeObjectURL(pendingVideoURLRef.current); pendingVideoURLRef.current = null; }
+    setPendingVideoURL(null); setVideoReadyPhase(null);
+    if(m === "horizontal-subtitles") startSub(f, s, "horizontal", model, c, true, 7, fn, an);
+    else if(m === "subtitles")       startSub(f, s, "vertical",   model, c, z, p, fn, an);
+    else                             startClips(f, s, model, c, sfx);
   };
 
   const onModelBack = () => {
     setPendingStyle(null); // pendingFile/pendingMode still set → style picker reappears
   };
+
+  // ── Cancelar job en curso ──
+  const cancelJob = useCallbackU(async () => {
+    const jId = subJobId || clipJobId;
+    // Cerrar EventSource inmediatamente para parar la UI
+    if (subEsRef.current)  { subEsRef.current.close();  subEsRef.current  = null; }
+    if (clipEsRef.current) { clipEsRef.current.close(); clipEsRef.current = null; }
+    // Notificar al servidor para que marque el job como cancelado
+    if (jId) {
+      try { await fetch(`/api/cancel/${jId}`, { method: "POST" }); } catch(_) {}
+    }
+    // Resetear estado de vuelta al inicio del flujo
+    setSubPhase("idle");  setSubStep(-1);  setSubBar(0);  setSubFile(null);  setSubJobId(null);  setSubError("");
+    setClipPhase("idle"); setClipStep(-1); setClipBar(0); setClipFile(null); setClipJobId(null); setClipError("");
+    setTotalClips(0); setCurClipIdx(0); setCurClipTitle("");
+  }, [subJobId, clipJobId]);
+
+  // ── Callback: VideoEditor terminó de re-renderizar ──
+  const onApplyChanges = useCallbackU((rrJobId) => {
+    setRerendering(true);
+    setRerenderProgress(0);
+    if (rrEsRef.current) { rrEsRef.current.close(); rrEsRef.current = null; }
+    const es = new EventSource(`/progress-rerender/${rrJobId}`);
+    rrEsRef.current = es;
+    es.onmessage = (e) => {
+      const msg = e.data;
+      if (msg === "KEEPALIVE") return;
+      if (msg.startsWith("RENDER_PCT:")) {
+        const p = parseInt(msg.replace("RENDER_PCT:", ""), 10);
+        if (!isNaN(p)) setRerenderProgress(p);
+        return;
+      }
+      if (msg.startsWith("DONE")) {
+        es.close(); rrEsRef.current = null;
+        setRerendering(false); setRerenderProgress(100);
+        return;
+      }
+      if (msg.startsWith("ERROR:")) {
+        es.close(); rrEsRef.current = null;
+        setRerendering(false);
+        return;
+      }
+    };
+    es.onerror = () => {
+      es.close(); rrEsRef.current = null;
+      setRerendering(false);
+    };
+  }, []);
 
   // Detectar si estamos en un flujo de subtítulos activo (vertical o horizontal)
   const isSubFlow = mode === "subtitles" || contentType === "horizontal";
@@ -1124,23 +2062,56 @@ function Uploader({ delay = 0 }) {
       initial={{filter:"blur(10px)",opacity:0,y:20}}
       animate={{filter:"blur(0px)",opacity:1,y:0}}
       transition={{duration:0.8,ease:[0.16,1,0.3,1],delay}}
-      className="w-full max-w-xl mt-10"
+      style={{
+        width:"100%",
+        maxWidth: (sector === 'picking' || pendingFile) ? "min(960px, 92vw)" : "36rem",
+        marginTop: sector === 'picking' ? "0" : "2.5rem",
+        transition: "max-width 0.4s ease",
+      }}
     >
 
+      {/* ══ PANTALLA INICIAL: EMPEZAR ══ */}
+      {sector === null && (
+        <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:0,paddingTop:130}}>
+          <button
+            onClick={()=>{ setSector('picking'); onDone && onDone(); }}
+            style={{
+              display:"inline-flex",alignItems:"center",gap:10,
+              background:"linear-gradient(135deg,#4a54c1,#5E6AD2)",
+              color:"#fff",fontFamily:"'Outfit',sans-serif",fontWeight:700,
+              fontSize:15,letterSpacing:"0.06em",textTransform:"uppercase",
+              padding:"15px 42px",borderRadius:12,border:"none",cursor:"pointer",
+              boxShadow:"0 0 0 1px rgba(94,106,210,0.50), 0 4px 28px rgba(94,106,210,0.45), inset 0 1px 0 rgba(255,255,255,0.14)",
+              transition:"all 0.2s ease",
+            }}
+            onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-2px)";e.currentTarget.style.boxShadow="0 0 0 1px rgba(94,106,210,0.65), 0 8px 36px rgba(94,106,210,0.55), inset 0 1px 0 rgba(255,255,255,0.18)";}}
+            onMouseLeave={e=>{e.currentTarget.style.transform="translateY(0)";e.currentTarget.style.boxShadow="0 0 0 1px rgba(94,106,210,0.50), 0 4px 28px rgba(94,106,210,0.45), inset 0 1px 0 rgba(255,255,255,0.14)";}}
+          >
+            Empezar
+          </button>
+        </div>
+      )}
+
+      {/* ══ SELECTOR DE SECTOR ══ */}
+      {sector === 'picking' && contentType === null && (
+        <SectorSelector
+          onSelect={s => setSector(s)}
+          onBack={()=>{ setSector(null); onBack && onBack(); }}
+        />
+      )}
+
       {/* ══ SELECTOR TIPO DE CONTENIDO ══ */}
-      {contentType === null && (
-        <ContentTypeSelector onSelect={setContentType} />
+      {sector === 'shorts' && contentType === null && (
+        <ContentTypeSelector
+          onSelect={setContentType}
+          onBack={()=>{ setSector('picking'); }}
+        />
       )}
 
       {/* ══ VERTICAL: SELECCIÓN DE MODO ══ */}
       {contentType === 'vertical' && mode === null && !pendingFile && (
         <div>
-          <button onClick={resetAll} style={backBtnStyle}
-            onMouseEnter={e=>e.currentTarget.style.color="rgba(255,255,255,0.65)"}
-            onMouseLeave={e=>e.currentTarget.style.color="rgba(255,255,255,0.35)"}
-          >
-            <ArrowLeft /> Volver
-          </button>
+          {sectionLabel("¿Qué quieres hacer?")}
           <div style={{display:"flex",gap:12}}>
             <ModeCard
               icon={<CaptionIcon/>}
@@ -1155,16 +2126,45 @@ function Uploader({ delay = 0 }) {
               onClick={()=>setMode("clips")}
             />
           </div>
+          <div style={{textAlign:"center", marginTop:44}}>
+            <button onClick={()=>setContentType(null)} style={{...backBtnStyle,display:"inline-flex",marginBottom:0}}
+              onMouseEnter={e=>e.currentTarget.style.color="rgba(255,255,255,0.65)"}
+              onMouseLeave={e=>e.currentTarget.style.color="rgba(255,255,255,0.35)"}
+            >
+              <ArrowLeft /> Volver
+            </button>
+          </div>
         </div>
       )}
 
+      {/* ══ VIDEO LISTO — PANTALLA INTERMEDIA ══ */}
+      {pendingFile && videoReadyPhase === "preview" && !pendingStyle && !isProcessing && !isDone && !isError && (
+        <VideoReadyScreen
+          file={pendingFile}
+          videoURL={pendingVideoURL}
+          onGenerate={() => {
+            onStyleSelected("style1", "#FFE033", true, 15, "outfit", "default");
+            setVideoReadyPhase(null);
+          }}
+          onCustomize={() => setVideoReadyPhase(null)}
+          onBack={() => {
+            if(pendingVideoURLRef.current) { URL.revokeObjectURL(pendingVideoURLRef.current); pendingVideoURLRef.current = null; }
+            setPendingVideoURL(null);
+            setPendingFile(null);
+            setPendingMode(null);
+            setVideoReadyPhase(null);
+            if(inputRef.current) inputRef.current.value="";
+          }}
+        />
+      )}
+
       {/* ══ STYLE PICKER — VERTICAL ══ */}
-      {pendingFile && !pendingStyle && pendingMode !== "horizontal-subtitles" && !isProcessing && !isDone && !isError && (
-        <StylePicker onSelect={onStyleSelected} onBack={onStyleBack} />
+      {pendingFile && !pendingStyle && videoReadyPhase !== "preview" && pendingMode !== "horizontal-subtitles" && !isProcessing && !isDone && !isError && (
+        <StylePicker onSelect={onStyleSelected} onBack={onStyleBack} videoURL={pendingVideoURL} />
       )}
 
       {/* ══ STYLE PICKER — HORIZONTAL ══ */}
-      {pendingFile && !pendingStyle && pendingMode === "horizontal-subtitles" && !isProcessing && !isDone && !isError && (
+      {pendingFile && !pendingStyle && videoReadyPhase !== "preview" && pendingMode === "horizontal-subtitles" && !isProcessing && !isDone && !isError && (
         <StylePickerHorizontal onSelect={onStyleSelected} onBack={onStyleBack} />
       )}
 
@@ -1176,40 +2176,38 @@ function Uploader({ delay = 0 }) {
       {/* ══ SUBTÍTULOS VERTICAL: UPLOAD ══ */}
       {contentType === 'vertical' && mode === "subtitles" && subPhase === "idle" && !pendingFile && (
         <div>
-          <button onClick={backToModeSelect} style={backBtnStyle}
-            onMouseEnter={e=>e.currentTarget.style.color="rgba(255,255,255,0.65)"}
-            onMouseLeave={e=>e.currentTarget.style.color="rgba(255,255,255,0.35)"}
-          >
-            <ArrowLeft /> Volver
-          </button>
-          {sectionLabel("✦ Añadir subtítulos")}
+          {sectionLabel("Añadir subtítulos")}
           <DropZone onFiles={onFiles} dragOver={dragOver} setDragOver={setDragOver} inputRef={inputRef} hint="Clip corto, máx ~2 min" inputId="aelios-file-sub" />
+          <div style={{textAlign:"center", marginTop:44}}>
+            <button onClick={backToModeSelect} style={{...backBtnStyle,display:"inline-flex",marginBottom:0}}
+              onMouseEnter={e=>e.currentTarget.style.color="rgba(255,255,255,0.65)"}
+              onMouseLeave={e=>e.currentTarget.style.color="rgba(255,255,255,0.35)"}
+            >
+              <ArrowLeft /> Volver
+            </button>
+          </div>
         </div>
       )}
 
       {/* ══ HORIZONTAL: UPLOAD ══ */}
       {contentType === 'horizontal' && subPhase === "idle" && !pendingFile && (
         <div>
-          <button onClick={resetAll} style={backBtnStyle}
-            onMouseEnter={e=>e.currentTarget.style.color="rgba(255,255,255,0.65)"}
-            onMouseLeave={e=>e.currentTarget.style.color="rgba(255,255,255,0.35)"}
-          >
-            <ArrowLeft /> Volver
-          </button>
-          {sectionLabel("✦ Añadir subtítulos")}
+          {sectionLabel("Añadir subtítulos")}
           <DropZone onFiles={onFiles} dragOver={dragOver} setDragOver={setDragOver} inputRef={inputRef} hint="Video horizontal, máx ~30 min" inputId="aelios-file-h" />
+          <div style={{textAlign:"center", marginTop:44}}>
+            <button onClick={resetAll} style={{...backBtnStyle,display:"inline-flex",marginBottom:0}}
+              onMouseEnter={e=>e.currentTarget.style.color="rgba(255,255,255,0.65)"}
+              onMouseLeave={e=>e.currentTarget.style.color="rgba(255,255,255,0.35)"}
+            >
+              <ArrowLeft /> Volver
+            </button>
+          </div>
         </div>
       )}
 
       {/* ══ CLIPS: SELECCIÓN DE TIPO ══ */}
       {contentType === 'vertical' && mode === "clips" && clipPhase === "idle" && !isDone && !isError && !clipVideoType && !pendingFile && (
         <div>
-          <button onClick={backToModeSelect} style={backBtnStyle}
-            onMouseEnter={e=>e.currentTarget.style.color="rgba(255,255,255,0.65)"}
-            onMouseLeave={e=>e.currentTarget.style.color="rgba(255,255,255,0.35)"}
-          >
-            <ArrowLeft /> Volver
-          </button>
           {sectionLabel("✂ Auto Clips")}
           <div style={{fontSize:"0.75rem",color:"rgba(255,255,255,0.32)",fontFamily:"'Inter',sans-serif",marginBottom:14}}>
             ¿Qué tipo de video vas a subir?
@@ -1226,19 +2224,20 @@ function Uploader({ delay = 0 }) {
               disabled soon
             />
           </div>
+          <div style={{textAlign:"center", marginTop:44}}>
+            <button onClick={backToModeSelect} style={{...backBtnStyle,display:"inline-flex",marginBottom:0}}
+              onMouseEnter={e=>e.currentTarget.style.color="rgba(255,255,255,0.65)"}
+              onMouseLeave={e=>e.currentTarget.style.color="rgba(255,255,255,0.35)"}
+            >
+              <ArrowLeft /> Volver
+            </button>
+          </div>
         </div>
       )}
 
       {/* ══ CLIPS: CONFIG YOUTUBE ══ */}
       {contentType === 'vertical' && mode === "clips" && clipPhase === "idle" && !isDone && !isError && clipVideoType === "youtube" && !pendingFile && (
         <div>
-          <button
-            onClick={()=>setClipVideoType(null)} style={backBtnStyle}
-            onMouseEnter={e=>e.currentTarget.style.color="rgba(255,255,255,0.65)"}
-            onMouseLeave={e=>e.currentTarget.style.color="rgba(255,255,255,0.35)"}
-          >
-            <ArrowLeft /> Tipo de video
-          </button>
           {sectionLabel("✂ Auto Clips — YouTube")}
           <PipSelector value={clipPipPos} onChange={setClipPipPos} />
           <DurationSelector value={clipDurRange} onChange={setClipDurRange} />
@@ -1247,51 +2246,133 @@ function Uploader({ delay = 0 }) {
             hint="Video horizontal de YouTube con cámara y pantalla"
             inputId="aelios-file-clips"
           />
+          <div style={{textAlign:"center", marginTop:44}}>
+            <button onClick={()=>setClipVideoType(null)} style={{...backBtnStyle,display:"inline-flex",marginBottom:0}}
+              onMouseEnter={e=>e.currentTarget.style.color="rgba(255,255,255,0.65)"}
+              onMouseLeave={e=>e.currentTarget.style.color="rgba(255,255,255,0.35)"}
+            >
+              <ArrowLeft /> Volver
+            </button>
+          </div>
         </div>
       )}
 
       {/* ══ SUBTÍTULOS: PROCESANDO ══ */}
       {isSubFlow && subPhase === "processing" && (
         <div className="liquid-glass-strong px-8 py-8" style={{borderRadius:"1.4rem"}}>
-          <div style={{fontSize:10,letterSpacing:"0.18em",color:"rgba(94,106,210,0.65)",fontFamily:"'Outfit',sans-serif",marginBottom:4,textTransform:"uppercase"}}>✦ Subtítulos</div>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
+            <div style={{fontSize:10,letterSpacing:"0.18em",color:"rgba(94,106,210,0.65)",fontFamily:"'Outfit',sans-serif",textTransform:"uppercase"}}>✦ Subtítulos</div>
+            <button onClick={cancelJob} style={{
+              fontSize:11,color:"rgba(255,80,80,0.70)",background:"rgba(255,60,60,0.08)",
+              border:"1px solid rgba(255,60,60,0.18)",borderRadius:7,
+              padding:"3px 10px",cursor:"pointer",fontFamily:"'Outfit',sans-serif",fontWeight:600,
+              transition:"all .15s",
+            }}
+            onMouseEnter={e=>{e.target.style.background="rgba(255,60,60,0.16)";e.target.style.color="rgba(255,80,80,1)";}}
+            onMouseLeave={e=>{e.target.style.background="rgba(255,60,60,0.08)";e.target.style.color="rgba(255,80,80,0.70)";}}>
+              ✕ Cancelar
+            </button>
+          </div>
           <div style={{fontSize:11,color:"rgba(255,255,255,0.35)",marginBottom:20,fontFamily:"'Inter',sans-serif",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
             Procesando <span style={{color:"rgba(255,255,255,0.65)",fontWeight:500}}>{subFile}</span>
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:12}}>
             {SUB_STEPS.map((label,i)=><StepRow key={i} label={label} state={subStep>i?"done":subStep===i?"active":"idle"} />)}
           </div>
-          <ProgressBar width={subBar} />
+          <ProgressBar width={subBar} showPct />
         </div>
       )}
 
       {/* ══ SUBTÍTULOS: LISTO ══ */}
       {isSubFlow && subPhase === "done" && (
-        <div className="liquid-glass-strong px-8 py-8 text-center" style={{borderRadius:"1.4rem"}}>
-          <div style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:11,color:"#4ade80",marginBottom:16,letterSpacing:".5px"}}>
-            <span style={{width:5,height:5,borderRadius:"50%",background:"#4ade80",boxShadow:"0 0 6px #4ade80",display:"inline-block"}} /> Video listo
-          </div>
-          <div>
-            <a href={`/download/${subJobId}`} download style={{
-              display:"inline-flex",alignItems:"center",gap:8,
-              background:"linear-gradient(135deg, #4a54c1, #5E6AD2)",
-              color:"#fff",
-              fontFamily:"'Outfit',sans-serif",fontWeight:700,fontSize:14,
-              padding:"13px 28px",borderRadius:10,textDecoration:"none",
-              boxShadow:"0 0 0 1px rgba(94,106,210,0.50), 0 4px 20px rgba(94,106,210,0.40), inset 0 1px 0 rgba(255,255,255,0.12)",
-            }}>
-              <DownloadIcon /> Descargar con captions
-            </a>
-          </div>
-          <button onClick={resetAll} style={{display:"block",margin:"12px auto 0",fontSize:11,color:"rgba(255,255,255,0.32)",background:"none",border:"none",cursor:"pointer",fontFamily:"'Outfit',sans-serif"}}>
-            Procesar otro video
-          </button>
+        <div className="liquid-glass-strong" style={{borderRadius:"1.4rem", padding:"32px 36px", textAlign:"center", width:"100%", boxSizing:"border-box"}}>
+
+          {rerendering ? (
+            /* ── Estado: aplicando cambios ── */
+            <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:22, minHeight:260 }}>
+              <style>{`@keyframes aeReSpin { to { transform: rotate(360deg); } }`}</style>
+              {/* Spinner */}
+              <div style={{
+                width:54, height:54,
+                border:"3px solid rgba(94,106,210,0.18)",
+                borderTopColor:"#5E6AD2",
+                borderRadius:"50%",
+                animation:"aeReSpin 0.85s linear infinite",
+                flexShrink:0,
+              }} />
+              {/* Texto */}
+              <div>
+                <div style={{ fontSize:15, fontFamily:"'Outfit',sans-serif", fontWeight:700, color:"rgba(255,255,255,0.88)", letterSpacing:"0.07em", textTransform:"uppercase", marginBottom:7 }}>
+                  Aplicando cambios
+                </div>
+                <div style={{ fontSize:11, fontFamily:"'Inter',sans-serif", color:"rgba(255,255,255,0.35)" }}>
+                  Regenerando el vídeo con tus ediciones...
+                </div>
+              </div>
+              {/* Barra de progreso */}
+              {rerenderProgress > 0 && (
+                <div style={{ width:"100%", maxWidth:260 }}>
+                  <ProgressBar width={rerenderProgress} showPct />
+                </div>
+              )}
+            </div>
+          ) : (
+            /* ── Estado: listo ── */
+            <>
+              <div style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:11,color:"#4ade80",marginBottom:18,letterSpacing:".5px"}}>
+                <span style={{width:5,height:5,borderRadius:"50%",background:"#4ade80",boxShadow:"0 0 6px #4ade80",display:"inline-block"}} /> Video listo
+              </div>
+
+              {/* Vista previa */}
+              <div style={{ display:"flex", justifyContent:"center", marginBottom:20 }}>
+                <VideoPreview
+                  jobId={subJobId}
+                  orientation={contentType === 'horizontal' ? "horizontal" : "vertical"}
+                />
+              </div>
+
+              {/* Botón descargar */}
+              <div style={{ marginBottom:0 }}>
+                <a href={`/download/${subJobId}`} download style={{
+                  display:"inline-flex",alignItems:"center",gap:8,
+                  background:"linear-gradient(135deg, #4a54c1, #5E6AD2)",
+                  color:"#fff",
+                  fontFamily:"'Outfit',sans-serif",fontWeight:700,fontSize:14,
+                  padding:"13px 28px",borderRadius:10,textDecoration:"none",
+                  boxShadow:"0 0 0 1px rgba(94,106,210,0.50), 0 4px 20px rgba(94,106,210,0.40), inset 0 1px 0 rgba(255,255,255,0.12)",
+                }}>
+                  <DownloadIcon /> GUARDAR
+                </a>
+              </div>
+
+              {/* Editor de vídeo */}
+              {(()=>{ const VE = window.VideoEditor; return VE ? <VE jobId={subJobId} onReset={resetAll} onApplyChanges={onApplyChanges} /> : null; })()}
+
+              <button onClick={resetAll} style={{display:"block",margin:"12px auto 0",fontSize:11,color:"rgba(255,255,255,0.32)",background:"none",border:"none",cursor:"pointer",fontFamily:"'Outfit',sans-serif"}}>
+                Procesar otro video
+              </button>
+            </>
+          )}
+
         </div>
       )}
 
       {/* ══ CLIPS: PROCESANDO ══ */}
       {mode === "clips" && clipPhase === "processing" && (
         <div className="liquid-glass-strong px-8 py-8" style={{borderRadius:"1.4rem"}}>
-          <div style={{fontSize:10,letterSpacing:"0.18em",color:"rgba(94,106,210,0.65)",fontFamily:"'Outfit',sans-serif",marginBottom:4,textTransform:"uppercase"}}>✂ Auto Clips</div>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
+            <div style={{fontSize:10,letterSpacing:"0.18em",color:"rgba(94,106,210,0.65)",fontFamily:"'Outfit',sans-serif",textTransform:"uppercase"}}>✂ Auto Clips</div>
+            <button onClick={cancelJob} style={{
+              fontSize:11,color:"rgba(255,80,80,0.70)",background:"rgba(255,60,60,0.08)",
+              border:"1px solid rgba(255,60,60,0.18)",borderRadius:7,
+              padding:"3px 10px",cursor:"pointer",fontFamily:"'Outfit',sans-serif",fontWeight:600,
+              transition:"all .15s",
+            }}
+            onMouseEnter={e=>{e.target.style.background="rgba(255,60,60,0.16)";e.target.style.color="rgba(255,80,80,1)";}}
+            onMouseLeave={e=>{e.target.style.background="rgba(255,60,60,0.08)";e.target.style.color="rgba(255,80,80,0.70)";}}>
+              ✕ Cancelar
+            </button>
+          </div>
           <div style={{fontSize:11,color:"rgba(255,255,255,0.35)",marginBottom:20,fontFamily:"'Inter',sans-serif",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
             Analizando <span style={{color:"rgba(255,255,255,0.65)",fontWeight:500}}>{clipFile}</span>
           </div>

@@ -13,12 +13,13 @@ import json
 import shutil
 import logging
 import argparse
+import threading
 import subprocess
 from pathlib import Path
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
-from faster_whisper import WhisperModel
-from groq import Groq
+# faster_whisper y groq se importan de forma lazy (solo al procesar el primer video)
+# → arranque del servidor mucho más rápido en frío
 
 # ── Rutas ───────────────────────────────────────────────────────────────────────
 # PyInstaller support: when frozen, __file__ is inside a temp dir — use exe location
@@ -81,6 +82,7 @@ def identify_key_words(words: list) -> tuple:
     secondary → palabras que reciben subrayado tipo lapiz amarillo
     """
     try:
+        from groq import Groq
         full_text = " ".join(w["text"] for w in words)
         client = Groq(api_key=_get_groq_key())
         response = client.chat.completions.create(
@@ -290,6 +292,19 @@ def compute_display_timing(groups: list, duration: float,
     return groups
 
 
+# ── Helper: hex → rgba(r,g,b,a) ──────────────────────────────────────────────────
+def _hex_to_rgba(hex_color: str, alpha: float) -> str:
+    h = hex_color.lstrip("#")
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return f"rgba({r},{g},{b},{alpha})"
+
+def _underline_neon_filter(hex_color: str) -> str:
+    """CSS filter: drop-shadow neón para el subrayado SVG, igual de intenso que el glow del BIG."""
+    c  = hex_color
+    c2 = _hex_to_rgba(hex_color, 0.75)
+    c3 = _hex_to_rgba(hex_color, 0.45)
+    return f"drop-shadow(0 0 4px {c}) drop-shadow(0 0 10px {c2}) drop-shadow(0 0 22px {c3})"
+
 # ── Glow presets por color de énfasis ────────────────────────────────────────────
 _GLOW_S1 = {   # sombra de color para .style-big en style1
     "#FFE033": "0 0 50px rgba(255,220,0,0.45)",
@@ -309,9 +324,18 @@ _GLOW_S2 = {   # glow completo para .s2 .style-big
 }
 
 # ── Generar HTML ─────────────────────────────────────────────────────────────────
+_FONT_CSS_MAP = {
+    "outfit":   ("'Outfit', sans-serif",          "700"),
+    "inter":    ("'Inter', sans-serif",            "700"),
+    "raleway":  ("'Raleway', sans-serif",          "300"),
+    "playfair": ("'Playfair Display', serif",      "700"),
+}
+
 def build_html(video_filename: str, duration: float, groups: list, lang: str = "es",
                style: str = "style1", orientation: str = "vertical",
-               highlight_color: str = "#FFE033") -> str:
+               highlight_color: str = "#FFE033", enable_zoom: bool = True,
+               caption_pos: int = 15, caption_font: str = "outfit",
+               caption_anim: str = "default") -> str:
     # Pre-calcular timing usando el sistema nativo de clips de HyperFrames
     groups = compute_display_timing(groups, duration)
 
@@ -330,32 +354,67 @@ def build_html(video_filename: str, duration: float, groups: list, lang: str = "
         words   = group["words"]
         n       = len(words)
 
-        if style in ("style2", "style_doc", "style3"):
+        if style in ("style2", "style_doc", "style3", "style_retro"):
             group_cls = "caption-group"
         else:
             group_cls = "caption-group emphasis-group" if is_emph else "caption-group"
-        spans = []
         kw_idx = group.get("key_word_index") if group.get("key_word_index") is not None else 1
-        for wi, word in enumerate(words):
-            if style in ("style_doc", "style3"):
-                sc = ""
-            elif is_emph:
-                sc = get_word_style_py(True, wi, n, kw_idx)
-            else:
-                sc = word.get("style") or ""   # style-underline o vacío
-            cls  = f"caption-word{' ' + sc if sc else ''}"
-            if style in ("style2", "style_doc", "style3"):
-                raw = word["t"].lower()
-            else:
-                raw  = word["t"].upper() if sc == "style-big" else word["t"].lower()
-            text = re.sub(r'[.,]', '', raw)
-            spans.append(f'        <span id="cw-{gi}-{wi}" class="{cls}">{text}</span>')
 
-        spans_html = "\n".join(spans)
+        # Style1 emphasis: vertical layout — before above, big in center, after below
+        if is_emph and style not in ("style2", "style_doc", "style3", "style_retro"):
+            before_spans, big_span_html, after_spans = [], None, []
+            for wi, word in enumerate(words):
+                sc   = get_word_style_py(True, wi, n, kw_idx)
+                cls  = f"caption-word{' ' + sc if sc else ''}"
+                raw  = word["t"].upper() if sc == "style-big" else word["t"].lower()
+                text = re.sub(r'[.,]', '', raw)
+                span = f'<span id="cw-{gi}-{wi}" class="{cls}">{text}</span>'
+                if wi < kw_idx:
+                    before_spans.append(f'          {span}')
+                elif wi == kw_idx:
+                    big_span_html = f'        {span}'
+                else:
+                    after_spans.append(f'          {span}')
+            html_parts = []
+            if before_spans:
+                html_parts.append(
+                    '        <div class="emphasis-before">\n' +
+                    '\n'.join(before_spans) + '\n        </div>'
+                )
+            if big_span_html:
+                html_parts.append(big_span_html)
+            if after_spans:
+                html_parts.append(
+                    '        <div class="emphasis-after">\n' +
+                    '\n'.join(after_spans) + '\n        </div>'
+                )
+            spans_html = "\n".join(html_parts)
+        else:
+            spans = []
+            for wi, word in enumerate(words):
+                if style in ("style_doc", "style3", "style_retro"):
+                    sc = ""
+                elif is_emph:
+                    sc = get_word_style_py(True, wi, n, kw_idx)
+                else:
+                    sc = word.get("style") or ""   # style-underline o vacío
+                cls  = f"caption-word{' ' + sc if sc else ''}"
+                if style in ("style2", "style_doc", "style3", "style_retro"):
+                    raw = word["t"].lower()
+                else:
+                    raw  = word["t"].upper() if sc == "style-big" else word["t"].lower()
+                text = re.sub(r'[.,]', '', raw)
+                spans.append(f'        <span id="cw-{gi}-{wi}" class="{cls}">{text}</span>')
+            spans_html = "\n".join(spans)
         lbl = "  <!-- ENFASIS -->" if is_emph else ""
+        # Subtract 1 ms from duration to prevent floating-point overlap errors.
+        # JS computes end = start + duration in IEEE-754, which can produce
+        # 3.030 + 0.950 = 3.9800000000000004 → detected as overlap with next
+        # clip starting at 3.980. The 1 ms gap is invisible to the viewer.
+        dd_safe = round(max(0.05, dd - 0.001), 3)
         clip_parts.append(
             f'    <div id="cg-clip-{gi}"{lbl}\n'
-            f'         data-start="{ds:.3f}" data-duration="{dd:.3f}" data-track-index="5"\n'
+            f'         data-start="{ds:.3f}" data-duration="{dd_safe:.3f}" data-track-index="5"\n'
             f'         style="position:absolute;left:0;top:0;width:100%;height:100%;'
             f'pointer-events:none;overflow:visible;">\n'
             f'      <div id="cg-{gi}" class="{group_cls}">\n'
@@ -386,6 +445,7 @@ def build_html(video_filename: str, duration: float, groups: list, lang: str = "
     ue_color = highlight_color.replace("#", "%23")
     glow_s1  = _GLOW_S1.get(highlight_color, _GLOW_S1["#FFE033"])
     glow_s2  = _GLOW_S2.get(highlight_color, _GLOW_S2["#FFE033"])
+    ue_glow  = _underline_neon_filter(highlight_color)
 
     # ── Estilo-dependiente: CSS extra y bloque de animación ─────────────────
     if style == "style2":
@@ -394,6 +454,8 @@ def build_html(video_filename: str, duration: float, groups: list, lang: str = "
         body_cls = ' class="doc"'
     elif style == "style3":
         body_cls = ' class="s3"'
+    elif style == "style_retro":
+        body_cls = ' class="retro"'
     else:
         body_cls = ""
 
@@ -441,10 +503,10 @@ def build_html(video_filename: str, duration: float, groups: list, lang: str = "
       text-shadow: """ + glow_s2 + """;
     }
     .s2 .caption-word.style-underline {
-      color: rgba(255,255,220,0.85);
-      text-shadow: 0 2px 10px rgba(0,0,0,0.90);
+      color: rgba(255,255,255,0.94);   /* blanco puro — sin tinte amarillo */
+      text-shadow: 0 2px 10px rgba(0,0,0,0.90), 0 4px 24px rgba(0,0,0,0.65);
     }
-    .s2 .caption-word.style-underline::after { display: none; }"""
+    /* s2: subrayado neón habilitado (hereda ::after del base, no se oculta) */"""
         anim_code = """ANIM.forEach(function(g) {
       var gi = g.gi;
       var gs = '#cg-' + gi;
@@ -494,6 +556,56 @@ def build_html(video_filename: str, duration: float, groups: list, lang: str = "
       tl.from(gs, { opacity: 0, y: 6, duration: 0.18, ease: 'power2.out' }, ds);
       tl.to(gs,   { opacity: 0,       duration: 0.14, ease: 'power1.in'  }, ds + dd - 0.14);
     });"""
+    elif style == "style_retro":
+        extra_css = """
+    /* ── STYLE RETRO — fansub anime español 90s/2000s ─────────────────────── */
+    /* Times New Roman Bold Italic · amarillo degradado · contorno azul marino */
+    .retro .caption-group {
+      flex-direction: row;
+      flex-wrap: nowrap;
+      align-items: center;
+      justify-content: center;
+      gap: 0px 8px;
+      white-space: nowrap;
+      transform: scaleX(1.05) scaleY(0.94);
+      filter:
+        drop-shadow(2px 3px 5px rgba(0,0,0,0.45))
+        drop-shadow(0   0   3px rgba(255,210,26,0.15));
+    }
+    .retro .caption-word {
+      font-family: 'Times New Roman', Times, 'Georgia', serif;
+      font-weight: bold;
+      font-style: italic;
+      font-size: 52px;
+      letter-spacing: -0.5px;
+      line-height: 1.2;
+      white-space: nowrap;
+      display: inline-block;
+      /* Degradado vertical vintage */
+      background: linear-gradient(to bottom, #FFE46B 0%, #FFD21A 48%, #E6B800 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      /* Contorno azul marino (fansub esencial) + borde exterior oscuro */
+      text-shadow:
+        -3px -3px 0 #1E2D73,  3px -3px 0 #1E2D73,
+        -3px  3px 0 #1E2D73,  3px  3px 0 #1E2D73,
+        -3px  0   0 #1E2D73,  3px  0   0 #1E2D73,
+         0   -3px 0 #1E2D73,  0    3px 0 #1E2D73,
+        -2px -2px 0 #1E2D73,  2px -2px 0 #1E2D73,
+        -2px  2px 0 #1E2D73,  2px  2px 0 #1E2D73,
+        -4px -4px 1px #0F1638, 4px -4px 1px #0F1638,
+        -4px  4px 1px #0F1638, 4px  4px 1px #0F1638,
+         0    0   8px rgba(255,210,26,0.20);
+    }"""
+        anim_code = """ANIM.forEach(function(g) {
+      var gi = g.gi;
+      var gs = '#cg-' + gi;
+      var ds = g.ds;
+      var dd = g.dd;
+      tl.from(gs, { opacity: 0, duration: 0.18, ease: 'power1.out' }, ds);
+      tl.to(gs,   { opacity: 0, duration: 0.14, ease: 'power1.in'  }, ds + dd - 0.14);
+    });"""
     elif style == "style_doc":
         extra_css = """
     /* ── STYLE DOC — subtítulo documental elegante, Playfair Display ─────── */
@@ -535,36 +647,78 @@ def build_html(video_filename: str, duration: float, groups: list, lang: str = "
     });"""
     else:
         extra_css = ""
-        anim_code = """ANIM.forEach(function(g) {
+        _zoom_code = """
+        var zoomIn  = Math.max(0, ds - 0.6);
+        var zoomOut = ds + dd + 0.3;
+        tl.to('#vid', { scale: 1.06, duration: 0.6, ease: 'power1.inOut',
+                         transformOrigin: '50% 15%' }, zoomIn);
+        tl.to('#vid', { scale: 1.0,  duration: 0.55, ease: 'power1.inOut' }, zoomOut);""" if enable_zoom else ""
+
+        # ── Animation variants for caption_anim ──────────────────────────────
+        if caption_anim == "slide":
+            anim_code = f"""ANIM.forEach(function(g) {{
+      var gs = '#cg-' + g.gi; var ds = g.ds; var dd = g.dd;
+      tl.from(gs, {{ opacity: 0, x: -40, duration: 0.20, ease: 'power2.out' }}, ds);
+      tl.to(gs,   {{ opacity: 0, x: 40,  duration: 0.15, ease: 'power2.in'  }}, ds + dd - 0.15);{_zoom_code and ""}
+    }});"""
+        elif caption_anim == "scale":
+            anim_code = f"""ANIM.forEach(function(g) {{
+      var gs = '#cg-' + g.gi; var ds = g.ds; var dd = g.dd;
+      tl.from(gs, {{ opacity: 0, scale: 0.6, transformOrigin: 'center bottom',
+                     duration: 0.22, ease: 'back.out(1.6)' }}, ds);
+      tl.to(gs,   {{ opacity: 0, scale: 0.8, duration: 0.14, ease: 'power1.in' }}, ds + dd - 0.14);{_zoom_code and ""}
+    }});"""
+        elif caption_anim == "bounce":
+            anim_code = f"""ANIM.forEach(function(g) {{
+      var gs = '#cg-' + g.gi; var ds = g.ds; var dd = g.dd;
+      tl.from(gs, {{ opacity: 0, y: 30, duration: 0.28, ease: 'elastic.out(1,0.5)' }}, ds);
+      tl.to(gs,   {{ opacity: 0,        duration: 0.14, ease: 'power1.in'           }}, ds + dd - 0.14);{_zoom_code and ""}
+    }});"""
+        else:  # default
+            anim_code = f"""ANIM.forEach(function(g) {{
       var gi = g.gi;
       var gs = '#cg-' + gi;
       var ds = g.ds;
       var dd = g.dd;
       var n  = g.n;
 
-      if (g.emph) {
+      if (g.emph) {{
         if (n >= 1) tl.from('#cw-' + gi + '-0',
-          { opacity: 0, y: -28, duration: 0.18, ease: 'power3.out' }, ds);
+          {{ opacity: 0, y: -28, duration: 0.18, ease: 'power3.out' }}, ds);
         if (n >= 2) tl.from('#cw-' + gi + '-1',
-          { opacity: 0, scaleY: 0.3, scaleX: 0.7, transformOrigin: 'center top',
-             duration: 0.22, ease: 'back.out(1.4)' }, ds + 0.1);
+          {{ opacity: 0, scaleY: 0.3, scaleX: 0.7, transformOrigin: 'center top',
+             duration: 0.22, ease: 'back.out(1.4)' }}, ds + 0.1);
         if (n >= 3) tl.from('#cw-' + gi + '-2',
-          { opacity: 0, y: 28, duration: 0.18, ease: 'power3.out' }, ds + 0.2);
-        tl.to(gs, { opacity: 0, y: -12, duration: 0.18, ease: 'power2.in' }, ds + dd - 0.18);
-        var zoomIn  = Math.max(0, ds - 0.6);
-        var zoomOut = ds + dd + 0.3;
-        tl.to('#vid', { scale: 1.06, duration: 0.6, ease: 'power1.inOut',
-                         transformOrigin: '50% 15%' }, zoomIn);
-        tl.to('#vid', { scale: 1.0,  duration: 0.55, ease: 'power1.inOut' }, zoomOut);
-      } else {
-        tl.from(gs, { opacity: 0, y: 8, duration: 0.15, ease: 'power2.out' }, ds);
-        tl.to(gs,   { opacity: 0,       duration: 0.12, ease: 'power1.in' }, ds + dd - 0.12);
-      }
-    });"""
+          {{ opacity: 0, y: 28, duration: 0.18, ease: 'power3.out' }}, ds + 0.2);
+        tl.to(gs, {{ opacity: 0, y: -12, duration: 0.18, ease: 'power2.in' }}, ds + dd - 0.18);{_zoom_code}
+      }} else {{
+        tl.from(gs, {{ opacity: 0, y: 8, duration: 0.15, ease: 'power2.out' }}, ds);
+        tl.to(gs,   {{ opacity: 0,       duration: 0.12, ease: 'power1.in' }}, ds + dd - 0.12);
+      }}
+    }});"""
 
     vid_w = 1920 if orientation == "horizontal" else 1080
     vid_h = 1080 if orientation == "horizontal" else 1920
-    caption_pos_css = "bottom: 72px; top: auto;" if orientation == "horizontal" else "top: 920px;"
+    _pos_px = max(0, int(caption_pos / 100 * vid_h))
+    caption_pos_css = f"bottom: {_pos_px}px; top: auto;"
+    # Override injected after all style-specific CSS so it always wins
+    # (#root has id specificity → beats any class-only rule, even with !important)
+    pos_override_css = f"""
+    /* ── User position override (applied last, highest specificity) ── */
+    #root .caption-group {{
+      bottom: {_pos_px}px !important;
+      top: auto !important;
+    }}"""
+
+    # Font override — only for non-specialised styles (retro/doc use fixed fonts)
+    _font_family, _font_weight = _FONT_CSS_MAP.get(caption_font, _FONT_CSS_MAP["outfit"])
+    _is_generic_style = style not in ("style_retro", "style_doc")
+    font_override_css = f"""
+    /* ── Font override ── */
+    #root .caption-word {{
+      font-family: {_font_family} !important;
+      font-weight: {_font_weight} !important;
+    }}""" if _is_generic_style and caption_font != "outfit" else ""
 
     return f"""<!doctype html>
 <html lang="{lang}">
@@ -572,7 +726,7 @@ def build_html(video_filename: str, duration: float, groups: list, lang: str = "
   <meta charset="UTF-8" />
   <meta name="viewport" content="width={vid_w}, height={vid_h}" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@700&family=Outfit:ital,wght@0,300;0,400;0,700;0,900;1,300;1,400&family=Dancing+Script:wght@700&family=Raleway:wght@300;400&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@700&family=Outfit:ital,wght@0,300;0,400;0,700;0,900;1,300;1,400&family=Dancing+Script:wght@700&family=Raleway:wght@300;400&family=Playfair+Display:ital,wght@1,700;1,800;1,900&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
   <style>
     * {{ margin: 0; padding: 0; box-sizing: border-box; }}
@@ -593,16 +747,36 @@ def build_html(video_filename: str, duration: float, groups: list, lang: str = "
       gap: 0px 16px;
     }}
 
-    /* ── Grupos enfasis: columna vertical centrada ── */
+    /* ── Grupos énfasis: columna centrada —
+          palabra BIG al nivel del caption (pie del contenedor),
+          small-words arriba y abajo en bloques absolutos ── */
     .caption-group.emphasis-group {{
       flex-direction: column;
       align-items: center;
-      flex-wrap: nowrap;
-      gap: 0px;
       z-index: 10;
     }}
+    .emphasis-before {{
+      position: absolute;
+      bottom: 100%;
+      left: 0; right: 0;
+      display: flex;
+      justify-content: center;
+      align-items: flex-end;
+      gap: 0px 16px;
+      padding-bottom: 6px;
+    }}
+    .emphasis-after {{
+      position: absolute;
+      top: 100%;
+      left: 0; right: 0;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      gap: 0px 16px;
+      padding-top: 6px;
+    }}
 
-    /* ── NORMAL: Outfit Bold — legible con stroke ── */
+    /* ── NORMAL: Outfit Bold — contorno via text-shadow (no text-stroke, evita artefactos) ── */
     .caption-word {{
       display: inline-block;
       font-family: 'Outfit', sans-serif;
@@ -612,9 +786,11 @@ def build_html(video_filename: str, duration: float, groups: list, lang: str = "
       text-transform: lowercase;
       letter-spacing: -0.5px;
       line-height: 1.15;
-      -webkit-text-stroke: 2px rgba(0,0,0,0.55);
-      paint-order: stroke fill;
       text-shadow:
+        -2px -2px 0 rgba(0,0,0,0.45),
+         2px -2px 0 rgba(0,0,0,0.45),
+        -2px  2px 0 rgba(0,0,0,0.45),
+         2px  2px 0 rgba(0,0,0,0.45),
         0 2px 8px rgba(0,0,0,0.99),
         0 4px 24px rgba(0,0,0,0.80),
         0 8px 40px rgba(0,0,0,0.50);
@@ -631,11 +807,15 @@ def build_html(video_filename: str, duration: float, groups: list, lang: str = "
       letter-spacing: 0.5px;
       line-height: 1.2;
       text-shadow:
+        -2px -2px 0 rgba(0,0,0,0.50),
+         2px -2px 0 rgba(0,0,0,0.50),
+        -2px  2px 0 rgba(0,0,0,0.50),
+         2px  2px 0 rgba(0,0,0,0.50),
         0 2px 8px rgba(0,0,0,0.95),
         0 4px 20px rgba(0,0,0,0.75);
     }}
 
-    /* ── BIG: enorme, bold, color énfasis con stroke ── */
+    /* ── BIG: enorme, bold, contorno via text-shadow (no text-stroke, evita artefactos) ── */
     .caption-word.style-big {{
       font-family: 'Outfit', sans-serif;
       font-weight: 900;
@@ -645,29 +825,33 @@ def build_html(video_filename: str, duration: float, groups: list, lang: str = "
       text-transform: uppercase;
       letter-spacing: -4px;
       line-height: 1.0;
-      -webkit-text-stroke: 4px rgba(0,0,0,0.70);
-      paint-order: stroke fill;
       text-shadow:
+        -4px -4px 0 rgba(0,0,0,0.65),
+         4px -4px 0 rgba(0,0,0,0.65),
+        -4px  4px 0 rgba(0,0,0,0.65),
+         4px  4px 0 rgba(0,0,0,0.65),
         {glow_s1},
         0 4px 12px rgba(0,0,0,0.99),
         0 8px 32px rgba(0,0,0,0.85);
     }}
 
-    /* ── UNDERLINE: subrayado tipo lapiz/marcador en amarillo ── */
+    /* ── UNDERLINE: subrayado neón mismo color que el resaltado ── */
     .caption-word.style-underline {{
       position: relative;
+      color: #ffffff;        /* palabra SIEMPRE blanca — sin tinte de color */
     }}
     .caption-word.style-underline::after {{
       content: '';
       position: absolute;
-      bottom: -9px;
-      left: -5px;
-      right: -5px;
-      height: 13px;
-      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 14' preserveAspectRatio='none'%3E%3Cpath d='M1,8 C12,5 22,11 38,7 C54,3 66,10 82,6 C98,2 112,10 128,6 C144,2 158,9 172,5 C183,4 193,8 199,6' stroke='{ue_color}' stroke-width='5.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M3,11 C18,9 35,12 55,10 C75,8 95,12 115,9 C135,7 155,11 175,9 C185,8 194,10 198,9' stroke='{ue_color}' stroke-width='2.2' fill='none' stroke-linecap='round' opacity='0.55' stroke-dasharray='9,5,14,3,8,6'/%3E%3Cpath d='M6,6 C35,5 65,7 95,5 C125,3 155,6 185,5' stroke='{ue_color}' stroke-width='1' fill='none' stroke-linecap='round' opacity='0.2'/%3E%3C%2Fsvg%3E");
+      bottom: -10px;
+      left: -6px;
+      right: -6px;
+      height: 15px;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 14' preserveAspectRatio='none'%3E%3Cpath d='M1,8 C12,5 22,11 38,7 C54,3 66,10 82,6 C98,2 112,10 128,6 C144,2 158,9 172,5 C183,4 193,8 199,6' stroke='{ue_color}' stroke-width='5.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M3,11 C18,9 35,12 55,10 C75,8 95,12 115,9 C135,7 155,11 175,9 C185,8 194,10 198,9' stroke='{ue_color}' stroke-width='2.2' fill='none' stroke-linecap='round' opacity='0.6' stroke-dasharray='9,5,14,3,8,6'/%3E%3Cpath d='M6,6 C35,5 65,7 95,5 C125,3 155,6 185,5' stroke='{ue_color}' stroke-width='1.2' fill='none' stroke-linecap='round' opacity='0.25'/%3E%3C%2Fsvg%3E");
       background-size: 100% 100%;
       background-repeat: no-repeat;
       pointer-events: none;
+      filter: {ue_glow};
     }}
 
     /* ── GLOW: cursiva naranja neon (Dancing Script) ── */
@@ -687,6 +871,8 @@ def build_html(video_filename: str, duration: float, groups: list, lang: str = "
         0 3px 6px rgba(0,0,0,0.9);
     }}
   {extra_css}
+  {pos_override_css}
+  {font_override_css}
   </style>
 </head>
 <body{body_cls}>
@@ -744,9 +930,151 @@ def _emit(progress_q, msg: str):
         progress_q.put(msg)
 
 
+def _render_html_to_video(project_dir: Path, output_file: Path, progress_q=None) -> bool:
+    """Runs the hyperframes render step. project_dir must contain index.html.
+    Returns True on success, False on failure (after emitting ERROR to queue)."""
+    render_log = project_dir / "render.log"
+
+    npx_cmd = os.environ.get("NPX_CMD", "")
+    base_dir = Path(__file__).parent
+
+    if npx_cmd and Path(npx_cmd).exists():
+        node_dir = Path(npx_cmd).parent
+    else:
+        node_dir = base_dir / "resources" / "tools" / "node"
+
+    node_exe = node_dir / "node.exe"
+    if not node_exe.exists():
+        node_exe = Path("node")
+
+    hf_cli = node_dir / "node_modules" / "hyperframes" / "dist" / "cli.js"
+    if not hf_cli.exists():
+        hf_cli = base_dir / "resources" / "tools" / "node" / "node_modules" / "hyperframes" / "dist" / "cli.js"
+
+    sub_env = os.environ.copy()
+
+    def _locate_ffmpeg() -> str:
+        import shutil as _shutil
+        fe = os.environ.get("FFMPEG_EXE", "").strip()
+        if fe and Path(fe).is_file():
+            return fe
+        bundled = Path(__file__).parent / "resources" / "tools" / "ffmpeg.exe"
+        if bundled.is_file():
+            return str(bundled)
+        found = _shutil.which("ffmpeg")
+        if found:
+            return found
+        try:
+            r = subprocess.run("where ffmpeg", shell=True, capture_output=True, text=True, timeout=5)
+            if r.returncode == 0:
+                first = r.stdout.strip().splitlines()[0].strip()
+                if first and Path(first).is_file():
+                    return first
+        except Exception:
+            pass
+        return ""
+
+    ffmpeg_exe = _locate_ffmpeg()
+    if ffmpeg_exe:
+        ffmpeg_dir = str(Path(ffmpeg_exe).parent)
+        existing_path = sub_env.get("PATH") or sub_env.get("Path") or sub_env.get("path") or ""
+        if ffmpeg_dir.lower() not in existing_path.lower():
+            sub_env["PATH"] = ffmpeg_dir + os.pathsep + existing_path
+        sub_env["FFMPEG_PATH"]  = ffmpeg_exe
+        sub_env["FFPROBE_PATH"] = os.environ.get("FFPROBE_EXE",
+                                                  str(Path(ffmpeg_exe).parent / "ffprobe.exe"))
+
+    if not hf_cli.exists():
+        err = f"hyperframes CLI no encontrado en: {hf_cli}"
+        log.error(f"  {err}")
+        if progress_q is not None:
+            progress_q.put(f"ERROR:{err}")
+        return False
+
+    cmd_list = [str(node_exe), str(hf_cli), "render", "--output", str(output_file)]
+    log.info(f"  Render CMD: {cmd_list}")
+    log.info(f"  Render CWD: {project_dir}")
+
+    with open(render_log, "w", encoding="utf-8") as _lf:
+        _lf.write(f"[v2] cmd={cmd_list}\n")
+        _lf.write(f"[v2] cwd={project_dir}\n")
+        _lf.write(f"[v2] node_exists={node_exe.exists()}, hf_exists={hf_cli.exists()}\n")
+        _lf.write(f"[v2] ffmpeg_exe={ffmpeg_exe}\n")
+        _lf.write(f"[v2] PATH_start={sub_env.get('PATH','')[:200]}\n\n")
+
+    result_code = -1
+    proc = None
+    try:
+        with open(render_log, "a", encoding="utf-8") as logf:
+            proc = subprocess.Popen(
+                cmd_list,
+                cwd=str(project_dir),
+                stdout=logf,
+                stderr=logf,
+                stdin=subprocess.DEVNULL,
+                shell=False,
+                env=sub_env,
+            )
+
+        _frame_re = re.compile(r'Capturing frame (\d+)/(\d+)')
+
+        def _monitor():
+            pos = 0
+            while proc.poll() is None:
+                try:
+                    with open(render_log, "r", encoding="utf-8", errors="replace") as _f:
+                        _f.seek(pos)
+                        chunk = _f.read()
+                        pos = _f.tell()
+                    for ln in chunk.splitlines():
+                        m = _frame_re.search(ln)
+                        if m:
+                            cur, tot = int(m.group(1)), int(m.group(2))
+                            pct = 92 + round(cur / max(tot, 1) * 6)
+                            _emit(progress_q, f"RENDER_PCT:{pct}")
+                        elif "Encoding video" in ln or "Assembling" in ln:
+                            _emit(progress_q, "RENDER_PCT:99")
+                except Exception:
+                    pass
+                time.sleep(0.5)
+
+        monitor = threading.Thread(target=_monitor, daemon=True)
+        monitor.start()
+
+        proc.wait(timeout=900)
+        result_code = proc.returncode
+        monitor.join(timeout=3)
+
+    except subprocess.TimeoutExpired:
+        if proc:
+            proc.kill()
+        result_code = -1
+        with open(render_log, "a", encoding="utf-8") as _lf:
+            _lf.write("\n[ERROR] Timeout: el render tardó más de 15 minutos\n")
+    except Exception as exc:
+        result_code = -1
+        with open(render_log, "a", encoding="utf-8") as _lf:
+            _lf.write(f"\n[ERROR] Excepción: {exc}\n")
+
+    if result_code != 0:
+        try:
+            last_lines = render_log.read_text(encoding="utf-8", errors="replace").strip().splitlines()[-8:]
+            err_detail = " | ".join(last_lines)
+        except Exception:
+            err_detail = f"código {result_code}"
+        log.error(f"  Render falló (código {result_code}). Ver: {render_log}")
+        if progress_q is not None:
+            progress_q.put(f"ERROR:Render falló (código {result_code}): {err_detail}")
+        return False
+
+    return True
+
+
 def process_video(video_path: Path, language: str, model: str, progress_q=None,
                   caption_style: str = "style1", orientation: str = "vertical",
-                  highlight_color: str = "#FFE033"):
+                  highlight_color: str = "#FFE033", enable_zoom: bool = True,
+                  caption_pos: int = 15, caption_font: str = "outfit",
+                  caption_anim: str = "default", reuse_captions: bool = False):
     name = video_path.stem
     _emit(progress_q, f">> Procesando: {video_path.name}")
 
@@ -754,13 +1082,94 @@ def process_video(video_path: Path, language: str, model: str, progress_q=None,
     project_dir.mkdir(parents=True, exist_ok=True)
 
     dest_video = project_dir / video_path.name
-    shutil.copy2(video_path, dest_video)
+    if not dest_video.exists():
+        shutil.copy2(video_path, dest_video)
+    else:
+        shutil.copy2(video_path, dest_video)  # always refresh source
     _emit(progress_q, "STEP:1:Video recibido")
+
+    # ── Re-render mode: skip transcription, use existing captions.json ──────────
+    if reuse_captions:
+        import json as _json_rr
+        caps_file = project_dir / "captions.json"
+        if not caps_file.exists():
+            _emit(progress_q, "ERROR:captions.json no encontrado para re-render")
+            return
+        with open(caps_file, encoding="utf-8") as _cf:
+            caps_data = _json_rr.load(_cf)
+        if not caps_data:
+            _emit(progress_q, "ERROR:captions.json vacío")
+            return
+        duration = get_video_duration(dest_video)
+        if duration == 0.0:
+            _emit(progress_q, "ERROR:No se pudo obtener duración del video")
+            return
+        # Reconstruct minimal groups from captions.json (no re-transcription)
+        # IMPORTANT: always use cap["text"] for displayed text (respects user edits),
+        # and use words[] only for timing data.
+        groups = []
+        for cap in caps_data:
+            edited_text = cap.get("text", "").strip()
+            if not edited_text:
+                continue
+            txt_words = edited_text.split()
+            words_raw = cap.get("words", [])
+            if words_raw and len(words_raw) == len(txt_words):
+                # Same word count: use edited text + original per-word timing + restore styles
+                gw = [{"t": txt_words[i], "s": words_raw[i]["start"],
+                       "e": words_raw[i]["end"],
+                       "style": words_raw[i].get("style")}
+                      for i in range(len(txt_words))]
+            else:
+                # Different word count (edited) or no word data: distribute timing evenly
+                n = max(1, len(txt_words))
+                dp = (cap["end"] - cap["start"]) / n
+                gw = [{"t": w,
+                       "s": round(cap["start"] + i * dp, 3),
+                       "e": round(cap["start"] + (i + 1) * dp, 3),
+                       "style": None}
+                      for i, w in enumerate(txt_words)]
+            if gw:
+                # Use word-based raw end to avoid using inflated display_end
+                # (captions.json stores display_end which for emphasis groups includes extra_s=0.5)
+                group_end = round(min(gw[-1]["e"] + 0.05, duration - 0.05), 3)
+                groups.append({
+                    "words": gw,
+                    "end": group_end,
+                    # Restore emphasis metadata so BIG/SMALL word styling is preserved
+                    "emphasis":       cap.get("emphasis", False),
+                    "key_word_index": cap.get("key_word_index"),
+                })
+
+        # Clip group ends to prevent display overlap with the next group's start
+        for _i in range(len(groups) - 1):
+            _next_start = groups[_i + 1]["words"][0]["s"]
+            if groups[_i]["end"] > _next_start:
+                groups[_i]["end"] = round(_next_start, 3)
+        if not groups:
+            _emit(progress_q, "ERROR:No hay grupos para re-renderizar")
+            return
+        _emit(progress_q, "STEP:4:Regenerando captions...")
+        html = build_html(video_path.name, duration, groups, lang=language,
+                          style=caption_style, orientation=orientation,
+                          highlight_color=highlight_color, enable_zoom=enable_zoom,
+                          caption_pos=caption_pos, caption_font=caption_font,
+                          caption_anim=caption_anim)
+        html_path = project_dir / "index.html"
+        with open(html_path, "w", encoding="utf-8") as _hf:
+            _hf.write(html)
+        _emit(progress_q, "STEP:5:Re-renderizando video...")
+        output_file = OUTPUT_DIR / f"{name}-captions.mp4"
+        ok = _render_html_to_video(project_dir, output_file, progress_q)
+        if ok:
+            _emit(progress_q, f"DONE:{output_file.stat().st_size / 1024 / 1024:.1f}MB")
+        return
 
     # 1. Transcribir
     _emit(progress_q, "STEP:2:Transcribiendo audio con Whisper...")
     transcript_path = project_dir / "transcript.json"
     try:
+        from faster_whisper import WhisperModel
         whisper_model = WhisperModel(model, device="cpu", compute_type="int8")
         segments, audio_info = whisper_model.transcribe(  # audio_info.duration = duracion real
             str(dest_video),
@@ -841,26 +1250,49 @@ def process_video(video_path: Path, language: str, model: str, progress_q=None,
     # 5. Generar index.html
     _emit(progress_q, "STEP:4:Generando captions...")
     html = build_html(video_path.name, duration, groups, lang=language, style=caption_style,
-                      orientation=orientation, highlight_color=highlight_color)
+                      orientation=orientation, highlight_color=highlight_color,
+                      enable_zoom=enable_zoom, caption_pos=caption_pos,
+                      caption_font=caption_font, caption_anim=caption_anim)
     html_path = project_dir / "index.html"
     with open(html_path, "w", encoding="utf-8") as f:
         f.write(html)
     log.info(f"  index.html generado ({duration:.1f}s)")
 
+    # Save captions.json for the post-render editor
+    import json as _json_caps
+    captions_data = []
+    for gi, group in enumerate(groups):
+        if group.get("skip"):
+            continue
+        ds   = group.get("display_start", 0)
+        dd   = group.get("display_dur", 0)
+        text = " ".join(w["t"] for w in group["words"])
+        captions_data.append({
+            "id":    gi,
+            "start": ds,
+            "end":   round(ds + dd, 3),
+            "text":  text,
+            "words": [
+                {"word": w["t"], "start": w.get("s", 0), "end": w.get("e", 0),
+                 "style": w.get("style")}
+                for w in group["words"]
+            ],
+            # Preserve emphasis metadata so re-renders can restore BIG/SMALL styling
+            "emphasis":       group.get("emphasis", False),
+            "key_word_index": group.get("key_word_index"),
+        })
+    caps_path = project_dir / "captions.json"
+    with open(caps_path, "w", encoding="utf-8") as f:
+        _json_caps.dump(captions_data, f, ensure_ascii=False, indent=2)
+    log.info(f"  captions.json guardado ({len(captions_data)} grupos)")
+
     # 5. Renderizar
     _emit(progress_q, "STEP:5:Renderizando video...")
     output_file = OUTPUT_DIR / f"{name}-captions.mp4"
-    render_log = project_dir / "render.log"
-    # NPX_CMD puede apuntar a npx.cmd del Node.js portable (seteado por Electron)
-    npx_cmd = os.environ.get("NPX_CMD", "npx")
-    cmd = f'"{npx_cmd}" --yes hyperframes render --output "{output_file}"'
-    with open(render_log, "w", encoding="utf-8") as logf:
-        result = subprocess.run(cmd, cwd=project_dir, stdout=logf, stderr=logf, shell=True)
-    if result.returncode != 0:
-        log.error(f"  Error en render. Ver: {render_log}")
-        return
 
-    _emit(progress_q, f"DONE:{output_file.stat().st_size / 1024 / 1024:.1f}MB")
+    ok = _render_html_to_video(project_dir, output_file, progress_q)
+    if ok:
+        _emit(progress_q, f"DONE:{output_file.stat().st_size / 1024 / 1024:.1f}MB")
 
 
 # ══════════════════════════════════════════════════════════════════════════════════
@@ -997,6 +1429,7 @@ def detect_best_clips(words: list, duration: float,
 
     total_min, total_sec = int(duration // 60), int(duration % 60)
     try:
+        from groq import Groq
         client = Groq(api_key=_get_groq_key())
         response = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
@@ -1352,6 +1785,59 @@ def cut_clip_ffmpeg(source: Path, start: float, end: float, output: Path) -> boo
         return False
 
 
+def detect_caption_pos_for_clip(clip_path: Path) -> int:
+    """
+    Analiza el clip para determinar la posición óptima de subtítulos.
+    Extrae un fotograma central, mide el brillo de la zona inferior (30% del frame)
+    vs el brillo medio total. Si la zona inferior es brillante/ocupada, sube los subs.
+    Devuelve caption_pos (% desde abajo, 0-100):
+      10-15 → zona inferior libre, subtítulos abajo
+      50-60 → zona inferior ocupada, subtítulos arriba
+    """
+    try:
+        # Duración del clip
+        r = subprocess.run(
+            [FFPROBE_EXE, "-v", "quiet", "-print_format", "json", "-show_format", str(clip_path)],
+            capture_output=True, timeout=10
+        )
+        duration = float(json.loads(r.stdout.decode("utf-8", errors="ignore"))["format"]["duration"])
+        mid = max(0.5, duration / 2)
+
+        # Brillo zona inferior (30% del frame)
+        r_bottom = subprocess.run([
+            FFMPEG_EXE, "-ss", str(mid), "-i", str(clip_path),
+            "-frames:v", "1",
+            "-vf", "crop=iw:ih*0.30:0:ih*0.70,format=gray,scale=16:16",
+            "-f", "rawvideo", "pipe:1"
+        ], capture_output=True, timeout=15)
+
+        # Brillo zona superior (30% del frame)
+        r_top = subprocess.run([
+            FFMPEG_EXE, "-ss", str(mid), "-i", str(clip_path),
+            "-frames:v", "1",
+            "-vf", "crop=iw:ih*0.30:0:0,format=gray,scale=16:16",
+            "-f", "rawvideo", "pipe:1"
+        ], capture_output=True, timeout=15)
+
+        def avg(data):
+            return sum(data) / len(data) if data else 128.0
+
+        bottom_brightness = avg(r_bottom.stdout)
+        top_brightness    = avg(r_top.stdout)
+
+        log.info(f"  [pos-detect] {clip_path.name}: bottom={bottom_brightness:.1f} top={top_brightness:.1f}")
+
+        # Decisión: si zona inferior es significativamente más brillante → mover subs arriba
+        if bottom_brightness > 160 or bottom_brightness > top_brightness * 1.35:
+            return 58   # subs en zona superior del frame
+        else:
+            return 12   # subs en zona inferior (default)
+
+    except Exception as e:
+        log.warning(f"  [pos-detect] error para {clip_path.name}: {e}")
+        return 12   # posición segura por defecto
+
+
 def process_long_video(video_path: Path, language: str, model: str, progress_q=None,
                        video_type: str = 'generic', pip_position: str = 'bottom-right',
                        caption_style: str = 'style1', clip_dur_range: str = 'medium',
@@ -1379,6 +1865,7 @@ def process_long_video(video_path: Path, language: str, model: str, progress_q=N
     # ── 1. Transcribir video completo ──
     _emit(progress_q, "CSTEP:2")
     try:
+        from faster_whisper import WhisperModel
         wmodel = WhisperModel(model, device="cpu", compute_type="int8")
         segments, audio_info = wmodel.transcribe(
             str(dest_video), language=language,
@@ -1456,9 +1943,13 @@ def process_long_video(video_path: Path, language: str, model: str, progress_q=N
         clip_input = INPUT_DIR / source_for_captions.name
         shutil.copy2(source_for_captions, clip_input)
 
+        # Detectar posición óptima de subtítulos para este clip
+        _clip_pos = detect_caption_pos_for_clip(clip_input)
+        log.info(f"  [pos-detect] clip {i+1}: usando caption_pos={_clip_pos}")
+
         # Añadir captions (sin relay de progreso interno)
         process_video(clip_input, language, model, progress_q=None, caption_style=caption_style,
-                      highlight_color=highlight_color)
+                      highlight_color=highlight_color, caption_pos=_clip_pos)
 
         # Limpiar archivo temporal de input
         try:

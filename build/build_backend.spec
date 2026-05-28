@@ -54,6 +54,13 @@ a = Analysis(
     excludes=[
         'tkinter', 'matplotlib', 'PIL', 'cv2',
         'numpy.testing', 'scipy', 'pandas',
+        # Exclude PyTorch -- faster_whisper uses ctranslate2, not torch
+        'torch', 'torchvision', 'torchaudio',
+        'torch.distributed', 'torch.utils', 'torch.nn',
+        # Exclude other heavy ML stuff not needed at runtime
+        'numba', 'llvmlite',
+        # Exclude jupyter/IPython
+        'IPython', 'jupyter', 'notebook',
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
@@ -73,7 +80,7 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    console=True,          # keep console for debugging; set False for silent release
+    console=False,         # no black window in production
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

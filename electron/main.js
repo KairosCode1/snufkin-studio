@@ -51,6 +51,27 @@ let mainWindow    = null;
 let loadingWindow = null;
 let serverProcess = null;
 
+// ── Single-instance lock: si ya hay otra instancia, traerla al frente y salir
+//    Esto evita doble-click → 2 Electrons compitiendo por el puerto 7331
+const gotTheLock = app.requestSingleInstanceLock();
+if (!gotTheLock) {
+  console.log('[electron] Otra instancia ya está corriendo, saliendo.');
+  app.quit();
+  process.exit(0);
+}
+app.on('second-instance', () => {
+  // Cuando alguien intenta abrir SnufkinStudio una segunda vez, traer la
+  // ventana existente al frente en lugar de abrir otra
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  } else if (loadingWindow) {
+    loadingWindow.show();
+    loadingWindow.focus();
+  }
+});
+
 // ── Path helpers ─────────────────────────────────────────────────────────────
 
 function resourcesPath() {
@@ -87,9 +108,13 @@ function buildEnv() {
   const env = Object.assign({}, process.env);
 
   // Prepend bundled tools to PATH so Python subprocesses find ffmpeg + npx
+  // IMPORTANT: on Windows process.env stores PATH as "Path" (not "PATH").
+  // Using env.PATH directly creates a *new* key and loses the full system PATH.
+  // We must find the real key name and modify it in-place.
   const sep = process.platform === 'win32' ? ';' : ':';
   if (fs.existsSync(tools)) {
-    env.PATH = [tools, nodeDir, env.PATH || ''].filter(Boolean).join(sep);
+    const pathKey = Object.keys(env).find(k => k.toLowerCase() === 'path') || 'PATH';
+    env[pathKey] = [tools, nodeDir, env[pathKey] || ''].filter(Boolean).join(sep);
   }
 
   // Explicit exe paths — only set if the files actually exist (dev vs packaged)
@@ -118,7 +143,120 @@ function buildEnv() {
   return env;
 }
 
+// ── Logging a archivo (para diagnosticar fallos cuando Electron está oculto) ──
+
+function getLogFile() {
+  try {
+    const dir = app.getPath('userData');
+    fs.mkdirSync(dir, { recursive: true });
+    return path.join(dir, 'electron-startup.log');
+  } catch {
+    return path.join(require('os').homedir(), 'snufkin-electron-startup.log');
+  }
+}
+
+function logToFile(msg) {
+  try {
+    fs.appendFileSync(
+      getLogFile(),
+      `[${new Date().toISOString()}] ${msg}\n`,
+      'utf8'
+    );
+  } catch {}
+}
+
+// ── Buscar Python — SIEMPRE devuelve ruta absoluta para que spawn la encuentre ──
+
+function _resolveAbsolute(cmd) {
+  // Usar `where` (Win) o `which` (Unix) para obtener la ruta absoluta del exe
+  try {
+    const probe = process.platform === 'win32' ? `where ${cmd}` : `which ${cmd}`;
+    const out = require('child_process').execSync(probe, {
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 3000,
+      encoding: 'utf8',
+      shell: true,
+    });
+    const first = (out || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean)[0];
+    return first || null;
+  } catch {
+    return null;
+  }
+}
+
+function _testExe(abs) {
+  try {
+    const out = require('child_process').execSync(`"${abs}" --version`, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 5000,
+      encoding: 'utf8',
+      shell: true,
+    });
+    return (out || '').trim();
+  } catch {
+    return null;
+  }
+}
+
+function findPythonExe() {
+  const candidates = process.platform === 'win32'
+    ? ['py', 'python', 'python3', 'py.exe', 'python.exe']
+    : ['python3', 'python'];
+
+  // 1. Resolver cada candidato a ruta absoluta vía `where` y verificar
+  for (const cand of candidates) {
+    const abs = _resolveAbsolute(cand);
+    if (abs && fs.existsSync(abs)) {
+      const ver = _testExe(abs);
+      if (ver) {
+        logToFile(`[python] OK via where: ${cand} -> ${abs} (${ver})`);
+        return abs;
+      }
+      logToFile(`[python] where encontró ${abs} pero --version falló`);
+    } else {
+      logToFile(`[python] where no encontró ${cand}`);
+    }
+  }
+
+  // 2. Fallback: rutas absolutas conocidas en Windows
+  if (process.platform === 'win32') {
+    const localApp = process.env.LOCALAPPDATA || '';
+    const programs = process.env.ProgramFiles || 'C:\\Program Files';
+    const absPaths = [
+      'C:\\Windows\\py.exe',
+      'C:\\Python314\\python.exe',
+      'C:\\Python313\\python.exe',
+      'C:\\Python312\\python.exe',
+      'C:\\Python311\\python.exe',
+      'C:\\Python310\\python.exe',
+      `${localApp}\\Programs\\Python\\Python314\\python.exe`,
+      `${localApp}\\Programs\\Python\\Python313\\python.exe`,
+      `${localApp}\\Programs\\Python\\Python312\\python.exe`,
+      `${localApp}\\Programs\\Python\\Python311\\python.exe`,
+      `${programs}\\Python314\\python.exe`,
+      `${programs}\\Python313\\python.exe`,
+    ];
+    for (const p of absPaths) {
+      if (fs.existsSync(p)) {
+        const ver = _testExe(p);
+        if (ver) {
+          logToFile(`[python] OK via abs path: ${p} (${ver})`);
+          return p;
+        }
+      }
+    }
+  } else {
+    const absPaths = ['/usr/bin/python3', '/usr/local/bin/python3', '/usr/bin/python'];
+    for (const p of absPaths) if (fs.existsSync(p)) return p;
+  }
+
+  logToFile('[python] *** NO PYTHON FOUND EN NINGÚN SITIO ***');
+  return null;
+}
+
 // ── Start Python backend ──────────────────────────────────────────────────────
+
+let pythonExeCached = null;
 
 function startServer() {
   const env = buildEnv();
@@ -126,41 +264,94 @@ function startServer() {
   if (app.isPackaged) {
     // Production: run the PyInstaller-built server.exe
     const exe = path.join(serverDir(), 'server.exe');
-    console.log('[electron] Starting server:', exe);
+    logToFile(`[server] Starting packaged exe: ${exe}`);
     serverProcess = spawn(exe, [], {
       env,
       cwd: serverDir(),
       windowsHide: true,
     });
   } else {
-    // Development: find Python executable (Windows can be 'py', 'python', or 'python3')
-    const script  = path.join(__dirname, '..', 'server.py');
-    const pyCands = process.platform === 'win32' ? ['py', 'python', 'python3'] : ['python3', 'python'];
-    let   py      = pyCands[0];
-    for (const cand of pyCands) {
-      try {
-        require('child_process').execSync(`${cand} --version`, { stdio: 'ignore', timeout: 3000 });
-        py = cand;
-        break;
-      } catch {}
+    // Dev mode: encontrar Python (cache para no buscar dos veces en el retry)
+    if (!pythonExeCached) pythonExeCached = findPythonExe();
+    const py = pythonExeCached;
+    const script = path.join(__dirname, '..', 'server.py');
+
+    if (!py) {
+      logToFile('[server] ABORTANDO: no se encontró Python en el sistema');
+      serverProcess = null;
+      return;
     }
-    console.log('[electron] Dev mode — starting:', py, script);
-    serverProcess = spawn(py, [script], {
-      env,
-      cwd: path.join(__dirname, '..'),
-      windowsHide: true,
-    });
+
+    logToFile(`[server] Spawning: "${py}" "${script}" (cwd=${path.join(__dirname, '..')})`);
+    try {
+      serverProcess = spawn(py, [script], {
+        env,
+        cwd: path.join(__dirname, '..'),
+        windowsHide: true,
+        shell: false,
+      });
+    } catch (e) {
+      logToFile(`[server] spawn() exception: ${e.message}`);
+      serverProcess = null;
+      return;
+    }
   }
 
-  serverProcess.stdout.on('data', (d) => process.stdout.write('[server] ' + d));
-  serverProcess.stderr.on('data', (d) => process.stderr.write('[server] ' + d));
-  serverProcess.on('error', (e) => console.error('[server] spawn error:', e.message));
-  serverProcess.on('exit', (code) => console.log('[server] exited with code', code));
+  if (!serverProcess) return;
+
+  logToFile(`[server] Spawned PID ${serverProcess.pid}`);
+
+  serverProcess.stdout.on('data', (d) => {
+    const s = '[server] ' + d.toString();
+    process.stdout.write(s);
+    logToFile(s.trimEnd());
+  });
+  serverProcess.stderr.on('data', (d) => {
+    const s = '[server-err] ' + d.toString();
+    process.stderr.write(s);
+    logToFile(s.trimEnd());
+  });
+  serverProcess.on('error', (e) => {
+    const msg = `[server] spawn error: ${e.message}`;
+    console.error(msg);
+    logToFile(msg);
+  });
+  serverProcess.on('exit', (code) => {
+    const msg = `[server] exited with code ${code}`;
+    console.log(msg);
+    logToFile(msg);
+  });
+}
+
+// ── Kill any process already listening on a port ─────────────────────────────
+
+function killPort(port) {
+  return new Promise((resolve) => {
+    const { exec } = require('child_process');
+    if (process.platform !== 'win32') {
+      exec(`lsof -ti:${port} | xargs kill -9 2>/dev/null || true`, () => resolve());
+      return;
+    }
+    // Windows: find PID listening on port, then taskkill it
+    exec(`netstat -aon`, { shell: true }, (_err, stdout) => {
+      const pids = new Set();
+      for (const line of (stdout || '').split('\n')) {
+        if (!line.includes(`0.0.0.0:${port}`) && !line.includes(`127.0.0.1:${port}`)) continue;
+        if (!line.includes('LISTENING')) continue;
+        const pid = line.trim().split(/\s+/).pop();
+        if (pid && /^\d+$/.test(pid) && pid !== '0') pids.add(pid);
+      }
+      if (pids.size === 0) return resolve();
+      console.log(`[electron] Killing orphan PIDs on port ${port}:`, [...pids]);
+      const cmds = [...pids].map(p => `taskkill /F /PID ${p}`).join(' & ');
+      exec(cmds, { shell: true }, () => resolve());
+    });
+  });
 }
 
 // ── Wait for FastAPI to be ready ──────────────────────────────────────────────
 
-function waitForServer(maxMs = 60000) {
+function waitForServer(maxMs = 120000) {
   return new Promise((resolve) => {
     const started = Date.now();
     function check() {
@@ -168,12 +359,12 @@ function waitForServer(maxMs = 60000) {
         res.resume();
         resolve(true);
       });
-      req.setTimeout(1000);
+      req.setTimeout(1500);
       req.on('error', () => {
         if (Date.now() - started > maxMs) {
           resolve(false);
         } else {
-          setTimeout(check, 600);
+          setTimeout(check, 800);
         }
       });
       req.on('timeout', () => req.destroy());
@@ -193,6 +384,7 @@ function createLoadingWindow() {
     resizable:   false,
     center:      true,
     skipTaskbar: true,
+    icon:        path.join(__dirname, 'icon.ico'),
     webPreferences: { nodeIntegration: false, contextIsolation: true },
   });
   loadingWindow.loadFile(path.join(__dirname, 'loading.html'));
@@ -214,13 +406,8 @@ function createMainWindow() {
     minHeight:       600,
     show:            false,
     backgroundColor: '#050506',
-    // Marco oscuro: barra de título nativa pero en gris oscuro
-    titleBarStyle:   'hidden',
-    titleBarOverlay: {
-      color:       '#0d0d11',   // fondo de la barra — gris muy oscuro
-      symbolColor: '#6b7280',   // iconos de min/max/cerrar — gris medio
-      height:      36,
-    },
+    icon:            path.join(__dirname, 'icon.ico'),
+    frame:           false,
     webPreferences: {
       preload:          path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -298,21 +485,114 @@ function createMainWindow() {
 
 app.whenReady().then(async () => {
   createLoadingWindow();
+
+  // Limpiar log de arranque anterior
+  try { fs.writeFileSync(getLogFile(), `=== SnufkinStudio launch ${new Date().toISOString()} ===\n`, 'utf8'); } catch {}
+  logToFile(`[main] electron version ${process.versions.electron}, node ${process.versions.node}`);
+  logToFile(`[main] app.isPackaged=${app.isPackaged}, __dirname=${__dirname}`);
+  logToFile(`[main] PATH=${(process.env.PATH || '').slice(0, 300)}...`);
+
+  // ── Paso 1: limpiar puerto antes de arrancar (huérfanos de sesiones anteriores) ──
+  await killPort(PORT);
+
   startServer();
 
-  // Loading screen mínimo 3.5 segundos aunque el servidor arranque antes
+  // ── Si el server no arrancó (Python no encontrado, spawn falló): abortar YA ──
+  if (!serverProcess) {
+    if (loadingWindow && !loadingWindow.isDestroyed()) loadingWindow.close();
+    let logTail = '';
+    try {
+      const log = fs.readFileSync(getLogFile(), 'utf8');
+      logTail = '\n\nLog:\n' + log.split('\n').slice(-15).join('\n');
+    } catch {}
+    dialog.showErrorBox(
+      'SnufkinStudio — Python no encontrado',
+      'No se pudo encontrar Python instalado en el sistema.\n\n' +
+      'Para arreglarlo:\n' +
+      '  1. Instala Python 3.10 o superior desde https://www.python.org\n' +
+      '  2. Durante la instalación marca "Add Python to PATH"\n' +
+      '  3. Reinicia el PC\n' +
+      '  4. Vuelve a abrir SnufkinStudio\n\n' +
+      `Log: ${getLogFile()}` +
+      logTail
+    );
+    app.quit();
+    return;
+  }
+
+  // ── Detectar si el server muere antes de responder ──────────────────────────
+  let serverDiedEarly = false;
+  serverProcess.on('exit', (code) => {
+    if (!mainWindow) serverDiedEarly = true;
+    logToFile(`[main] Detected early server exit code=${code}`);
+  });
+
+  // Loading screen mínimo 4.5 s aunque el servidor arranque antes
+  // Si el server muere de golpe (import error, etc.), salir del wait inmediatamente
+  const waitWithEarlyExit = (ms) => {
+    return new Promise((resolve) => {
+      const check = setInterval(() => {
+        if (serverDiedEarly) { clearInterval(check); resolve(false); }
+      }, 300);
+      waitForServer(ms).then((r) => { clearInterval(check); resolve(r); });
+    });
+  };
+
   const [ready] = await Promise.all([
-    waitForServer(60000),
+    waitWithEarlyExit(120000),
     new Promise(r => setTimeout(r, 4500)),
   ]);
 
   if (!ready) {
-    dialog.showErrorBox(
-      'SnufkinStudio — Error al iniciar',
-      'No se pudo arrancar el servidor backend.\n\nComprueba que la instalación está completa e inténtalo de nuevo.'
-    );
-    app.quit();
-    return;
+    // ── Segundo intento automático ────────────────────────────────────────────
+    console.log('[electron] Primer intento falló, reintentando...');
+    if (loadingWindow && !loadingWindow.isDestroyed()) {
+      loadingWindow.webContents.executeJavaScript(
+        'document.getElementById("status").textContent = "Reintentando arranque…"'
+      ).catch(() => {});
+    }
+
+    // Matar proceso que quizá arrancó pero no responde, limpiar puerto de nuevo
+    if (serverProcess && !serverProcess.killed) {
+      try { serverProcess.kill('SIGTERM'); } catch (_) {}
+      serverProcess = null;
+    }
+    await new Promise(r => setTimeout(r, 1500));
+    await killPort(PORT);
+    await new Promise(r => setTimeout(r, 500));
+
+    serverDiedEarly = false;   // reset
+    startServer();
+    let ready2 = false;
+    if (serverProcess) {
+      serverProcess.on('exit', () => {
+        if (!mainWindow) serverDiedEarly = true;
+      });
+      ready2 = await waitWithEarlyExit(90000);
+    }
+
+    if (!ready2) {
+      if (loadingWindow && !loadingWindow.isDestroyed()) loadingWindow.close();
+      // Leer las últimas líneas del log para mostrarlas al usuario
+      let logTail = '';
+      try {
+        const log = fs.readFileSync(getLogFile(), 'utf8');
+        const lines = log.trim().split('\n');
+        logTail = '\n\nLog (últimas 10 líneas):\n' + lines.slice(-10).join('\n');
+      } catch {}
+      dialog.showErrorBox(
+        'SnufkinStudio — Error al iniciar',
+        'No se pudo arrancar el servidor backend.\n\n' +
+        'Posibles causas:\n' +
+        '  • Python no está instalado o no está en el PATH\n' +
+        '  • Otro programa usa el puerto 7331\n' +
+        '  • Faltan dependencias (pip install -r requirements.txt)\n\n' +
+        `Log completo: ${getLogFile()}` +
+        logTail
+      );
+      app.quit();
+      return;
+    }
   }
 
   createMainWindow();
@@ -327,9 +607,19 @@ app.on('before-quit', killServer);
 
 function killServer() {
   if (serverProcess && !serverProcess.killed) {
-    try { serverProcess.kill('SIGTERM'); } catch (_) {}
+    try {
+      // En Windows SIGTERM no siempre mata el proceso inmediatamente
+      if (process.platform === 'win32') {
+        const { execSync } = require('child_process');
+        try { execSync(`taskkill /F /T /PID ${serverProcess.pid}`, { stdio: 'ignore' }); } catch (_) {}
+      } else {
+        serverProcess.kill('SIGTERM');
+      }
+    } catch (_) {}
     serverProcess = null;
   }
+  // Limpiar el puerto por si acaso (async, no esperamos)
+  killPort(PORT).catch(() => {});
 }
 
 // ── IPC: Settings bridge ──────────────────────────────────────────────────────
@@ -380,3 +670,42 @@ ipcMain.handle('settings:delete-key', async () => {
   });
   return { ok: true };
 });
+
+// ── IPC: Activation ──────────────────────────────────────────────────────────
+// Códigos válidos almacenados como SHA-256 (hex) del código en mayúsculas sin guiones.
+// Para generar un nuevo código: node -e "const c=require('crypto');console.log(c.createHash('sha256').update('SNUFXXXX').digest('hex'))"
+const VALID_CODE_HASHES = new Set([
+  // 1234xx1234
+  '83c553f3323fe5c7fe284f9ff746373de2916d32a4ecbf640c14fffd7aa0bde1',
+]);
+
+const crypto = require('crypto');
+function _hashCode(raw) {
+  return crypto.createHash('sha256')
+    .update(raw.toUpperCase().replace(/-/g, ''))
+    .digest('hex');
+}
+
+ipcMain.handle('activation:check', () => {
+  return { activated: store.get('activated', false) === true };
+});
+
+ipcMain.handle('activation:validate', (_event, code) => {
+  if (!code || typeof code !== 'string') return { ok: false, error: 'Código inválido' };
+  const normalized = code.trim();
+  const hash = _hashCode(normalized);
+  if (VALID_CODE_HASHES.has(hash)) {
+    store.set('activated', true);
+    store.set('activationCode', normalized.toUpperCase());
+    return { ok: true };
+  }
+  return { ok: false, error: 'Código incorrecto. Contacta con soporte.' };
+});
+
+// ── IPC: Window controls (frameless) ─────────────────────────────────────────
+ipcMain.on('window:minimize',  () => mainWindow?.minimize());
+ipcMain.on('window:maximize',  () => {
+  if (mainWindow?.isMaximized()) mainWindow.restore();
+  else mainWindow?.maximize();
+});
+ipcMain.on('window:close',     () => mainWindow?.close());

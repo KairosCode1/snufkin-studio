@@ -1,6 +1,6 @@
 {
   "name": "snufkin-studio",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "SnufkinStudio — Auto Captions",
   "author": "SnufkinStudio",
   "main": "electron/main.js",
@@ -28,6 +28,7 @@
       "releaseType": "release"
     },
     "win": {
+      "icon": "electron/icon.ico",
       "target": [
         {
           "target": "nsis",
@@ -42,7 +43,14 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "SnufkinStudio"
+      "shortcutName": "SnufkinStudio",
+      "installerLanguages": ["es-ES", "en-US"],
+      "language": "3082",
+      "deleteAppDataOnUninstall": false,
+      "runAfterFinish": true,
+      "installerIcon": "electron/icon.ico",
+      "uninstallerIcon": "electron/icon.ico",
+      "menuCategory": "SnufkinStudio"
     },
     "extraResources": [
       {
