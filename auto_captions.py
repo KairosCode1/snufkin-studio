@@ -1170,7 +1170,9 @@ def process_video(video_path: Path, language: str, model: str, progress_q=None,
     transcript_path = project_dir / "transcript.json"
     try:
         from faster_whisper import WhisperModel
+        _emit(progress_q, f"STEP:2:Cargando modelo Whisper '{model}'...")
         whisper_model = WhisperModel(model, device="cpu", compute_type="int8")
+        _emit(progress_q, "STEP:2:Transcribiendo audio...")
         segments, audio_info = whisper_model.transcribe(  # audio_info.duration = duracion real
             str(dest_video),
             language=language,
@@ -1214,10 +1216,12 @@ def process_video(video_path: Path, language: str, model: str, progress_q=None,
         log.info(f"  {len(words)} palabras transcritas (duracion audio: {whisper_duration}s)")
     except Exception as e:
         log.error(f"  Error en transcripcion: {e}")
+        _emit(progress_q, f"ERROR:Error en transcripción Whisper: {e}")
         return
 
     if not words:
         log.error("  Transcript vacio, abortando.")
+        _emit(progress_q, "ERROR:No se detectó audio en el vídeo (transcript vacío)")
         return
 
     # 2. Obtener duracion fiable ANTES de generar grupos (para clampar palabras)

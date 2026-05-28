@@ -146,8 +146,10 @@ async def upload(
                 jobs[job_id].update({"status": "done", "output": out,
                                      "project_dir": PROJECTS_DIR / video_path.stem})
             else:
-                jobs[job_id]["status"] = "error"
-                q.put("ERROR:No se generó el archivo de salida")
+                # Only emit generic error if process_video didn't already emit one
+                if jobs[job_id]["status"] != "error":
+                    jobs[job_id]["status"] = "error"
+                    q.put("ERROR:No se generó el archivo de salida")
         except Exception as e:
             jobs[job_id]["status"] = "error"
             q.put(f"ERROR:{e}")
