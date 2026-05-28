@@ -126,6 +126,36 @@ function buildEnv() {
   if (fs.existsSync(ffprobeExe)) env.FFPROBE_EXE = ffprobeExe;
   if (fs.existsSync(npxCmd))     env.NPX_CMD      = npxCmd;
 
+  // ── Auto-detect browser for HyperFrames (HYPERFRAMES_BROWSER_PATH) ──────────
+  // HyperFrames needs Chrome/Edge to render video. We try common install paths
+  // so it works on any Windows 10/11 machine without manual setup.
+  if (!env.HYPERFRAMES_BROWSER_PATH) {
+    const userProfile = process.env.USERPROFILE || process.env.HOME || '';
+    const browserCandidates = [
+      // Puppeteer cache (installed by hyperframes doctor)
+      path.join(userProfile, '.cache', 'puppeteer', 'chrome-headless-shell', 'win64-stable', 'chrome-headless-shell-win64', 'chrome-headless-shell.exe'),
+      path.join(userProfile, '.cache', 'puppeteer', 'chrome', 'win64-stable', 'chrome-win64', 'chrome.exe'),
+      // Google Chrome — per-user install (most common on Windows)
+      path.join(userProfile, 'AppData', 'Local', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+      // Google Chrome — system-wide installs
+      'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+      'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+      // Microsoft Edge — always present on Windows 10/11
+      'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+      'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+      path.join(userProfile, 'AppData', 'Local', 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+    ];
+    const foundBrowser = browserCandidates.find(p2 => {
+      try { return fs.existsSync(p2); } catch { return false; }
+    });
+    if (foundBrowser) {
+      env.HYPERFRAMES_BROWSER_PATH = foundBrowser;
+      logToFile(`[browser] Found browser: ${foundBrowser}`);
+    } else {
+      logToFile('[browser] WARNING: No browser found — HyperFrames render may fail');
+    }
+  }
+
   // Static files dir (needed so server.py can mount /static correctly)
   env.APP_STATIC_DIR = staticDir();
 
