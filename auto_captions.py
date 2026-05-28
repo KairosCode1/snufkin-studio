@@ -725,9 +725,11 @@ def build_html(video_filename: str, duration: float, groups: list, lang: str = "
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width={vid_w}, height={vid_h}" />
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@700&family=Outfit:ital,wght@0,300;0,400;0,700;0,900;1,300;1,400&family=Dancing+Script:wght@700&family=Raleway:wght@300;400&family=Playfair+Display:ital,wght@1,700;1,800;1,900&display=swap" rel="stylesheet">
-  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <!-- Fonts: load async, never block render if CDN is unreachable -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:ital,wght@0,300;0,400;0,700;0,900;1,300;1,400&family=Dancing+Script:wght@700&family=Raleway:wght@300;400&family=Playfair+Display:ital,wght@1,700;1,800;1,900&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+  <!-- GSAP is injected by HyperFrames renderer — no external CDN needed here -->
   <style>
     * {{ margin: 0; padding: 0; box-sizing: border-box; }}
     html, body {{
@@ -953,6 +955,26 @@ def _render_html_to_video(project_dir: Path, output_file: Path, progress_q=None)
 
     sub_env = os.environ.copy()
 
+    # Asegurar que PUPPETEER_CACHE_DIR está en el entorno del render
+    # Electron lo pasa vía APP_WORKSPACE; si no, derivarlo del workspace
+    if "PUPPETEER_CACHE_DIR" not in sub_env:
+        workspace = os.environ.get("APP_WORKSPACE", "")
+        if workspace:
+            import pathlib as _pl
+            # userData está un nivel arriba del workspace
+            user_data = str(_pl.Path(workspace).parent)
+            sub_env["PUPPETEER_CACHE_DIR"] = str(_pl.Path(user_data) / "puppeteer-cache")
+
+    # Buscar Chrome Headless Shell instalado por doctor en el cache de Puppeteer
+    if "HYPERFRAMES_BROWSER_PATH" not in sub_env or not Path(sub_env.get("HYPERFRAMES_BROWSER_PATH", "")).exists():
+        pup_cache = sub_env.get("PUPPETEER_CACHE_DIR", "")
+        if pup_cache:
+            import glob as _glob
+            shells = _glob.glob(str(Path(pup_cache) / "chrome-headless-shell" / "**" / "chrome-headless-shell.exe"), recursive=True)
+            if shells:
+                sub_env["HYPERFRAMES_BROWSER_PATH"] = shells[0]
+                log.info(f"  Browser: Chrome Headless Shell @ {shells[0]}")
+
     def _locate_ffmpeg() -> str:
         import shutil as _shutil
         fe = os.environ.get("FFMPEG_EXE", "").strip()
@@ -1057,14 +1079,26 @@ def _render_html_to_video(project_dir: Path, output_file: Path, progress_q=None)
             _lf.write(f"\n[ERROR] Excepción: {exc}\n")
 
     if result_code != 0:
+        # Buscar línea de error relevante en el log (ignorar líneas de progreso y no-blocking)
+        err_detail = f"código {result_code}"
         try:
-            last_lines = render_log.read_text(encoding="utf-8", errors="replace").strip().splitlines()[-8:]
-            err_detail = " | ".join(last_lines)
+            lines = render_log.read_text(encoding="utf-8", errors="replace").splitlines()
+            for ln in reversed(lines):
+                ln_clean = ln.strip()
+                # Ignorar líneas de progreso y avisos no bloqueantes
+                if not ln_clean:
+                    continue
+                if "non-blocking" in ln_clean or "Capturing frame" in ln_clean:
+                    continue
+                if ln_clean.startswith("[") or "%" in ln_clean:
+                    continue
+                err_detail = ln_clean[:120]  # máx 120 chars
+                break
         except Exception:
-            err_detail = f"código {result_code}"
+            pass
         log.error(f"  Render falló (código {result_code}). Ver: {render_log}")
         if progress_q is not None:
-            progress_q.put(f"ERROR:Render falló (código {result_code}): {err_detail}")
+            progress_q.put(f"ERROR:Render falló [#{result_code}] — {err_detail}")
         return False
 
     return True

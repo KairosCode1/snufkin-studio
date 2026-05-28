@@ -126,35 +126,46 @@ function buildEnv() {
   if (fs.existsSync(ffprobeExe)) env.FFPROBE_EXE = ffprobeExe;
   if (fs.existsSync(npxCmd))     env.NPX_CMD      = npxCmd;
 
-  // ── Auto-detect browser for HyperFrames (HYPERFRAMES_BROWSER_PATH) ──────────
-  // HyperFrames needs Chrome/Edge to render video. We try common install paths
-  // so it works on any Windows 10/11 machine without manual setup.
+  // ── HyperFrames browser: prefer Puppeteer's Chrome Headless Shell ────────────
+  // Do NOT use system Chrome/Edge — they get killed by Windows Defender when
+  // launched with --no-sandbox. Only use them as last resort.
+  // Chrome Headless Shell is installed via `node hf_cli doctor` on first run.
   if (!env.HYPERFRAMES_BROWSER_PATH) {
     const userProfile = process.env.USERPROFILE || process.env.HOME || '';
-    const browserCandidates = [
-      // Puppeteer cache (installed by hyperframes doctor)
+    // Check all known Puppeteer cache locations for chrome-headless-shell
+    const hfCacheDir  = path.join(app.getPath('userData'), 'hf-browser-cache');
+    const puppCandidates = [
+      // HyperFrames own cache (installed by doctor, stored in userData)
+      path.join(hfCacheDir, 'chrome-headless-shell.exe'),
+      // Standard Puppeteer cache locations
       path.join(userProfile, '.cache', 'puppeteer', 'chrome-headless-shell', 'win64-stable', 'chrome-headless-shell-win64', 'chrome-headless-shell.exe'),
-      path.join(userProfile, '.cache', 'puppeteer', 'chrome', 'win64-stable', 'chrome-win64', 'chrome.exe'),
-      // Google Chrome — per-user install (most common on Windows)
-      path.join(userProfile, 'AppData', 'Local', 'Google', 'Chrome', 'Application', 'chrome.exe'),
-      // Google Chrome — system-wide installs
-      'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-      'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-      // Microsoft Edge — always present on Windows 10/11
-      'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-      'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
-      path.join(userProfile, 'AppData', 'Local', 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+      path.join(userProfile, '.cache', 'puppeteer', 'chrome-headless-shell', 'win64-129.0.6668.100', 'chrome-headless-shell-win64', 'chrome-headless-shell.exe'),
     ];
-    const foundBrowser = browserCandidates.find(p2 => {
-      try { return fs.existsSync(p2); } catch { return false; }
-    });
-    if (foundBrowser) {
-      env.HYPERFRAMES_BROWSER_PATH = foundBrowser;
-      logToFile(`[browser] Found browser: ${foundBrowser}`);
+    const foundHeadless = puppCandidates.find(p2 => { try { return fs.existsSync(p2); } catch { return false; } });
+    if (foundHeadless) {
+      env.HYPERFRAMES_BROWSER_PATH = foundHeadless;
+      logToFile(`[browser] Chrome Headless Shell: ${foundHeadless}`);
     } else {
-      logToFile('[browser] WARNING: No browser found — HyperFrames render may fail');
+      // Last resort: system Chrome/Edge (may be killed by AV with --no-sandbox)
+      const sysCandidates = [
+        path.join(userProfile, 'AppData', 'Local', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+        'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+        'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+        'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+        'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+        path.join(userProfile, 'AppData', 'Local', 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+      ];
+      const foundSys = sysCandidates.find(p2 => { try { return fs.existsSync(p2); } catch { return false; } });
+      if (foundSys) {
+        env.HYPERFRAMES_BROWSER_PATH = foundSys;
+        logToFile(`[browser] System browser (fallback): ${foundSys}`);
+      } else {
+        logToFile('[browser] WARNING: No browser found — will attempt auto-install on render');
+      }
     }
   }
+  // Tell HyperFrames where to cache its own browser download
+  env.PUPPETEER_CACHE_DIR = path.join(app.getPath('userData'), 'puppeteer-cache');
 
   // Static files dir (needed so server.py can mount /static correctly)
   env.APP_STATIC_DIR = staticDir();
@@ -496,6 +507,10 @@ function createMainWindow() {
         });
       }, 5000);
     }
+
+    // ── Instalar Chrome Headless Shell en segundo plano (necesario para render) ─
+    // Se ejecuta una vez; si ya está instalado, doctor termina en <1s.
+    setTimeout(() => _ensureBrowserInstalled(), 3000);
   });
 
   mainWindow.on('closed', () => { mainWindow = null; });
@@ -508,6 +523,50 @@ function createMainWindow() {
     shell.openExternal(url);
     return { action: 'deny' };
   });
+}
+
+// ── Instalar Chrome Headless Shell para HyperFrames ──────────────────────────
+// Se ejecuta en segundo plano la primera vez que se abre la app.
+// Utiliza el mismo node.exe y hf_cli que usa el render.
+function _ensureBrowserInstalled() {
+  try {
+    const tools   = toolsPath();
+    const nodeDir = path.join(tools, 'node');
+    const nodeExe = path.join(nodeDir, 'node.exe');
+    const hfCli   = path.join(nodeDir, 'node_modules', 'hyperframes', 'dist', 'cli.js');
+
+    if (!fs.existsSync(nodeExe) || !fs.existsSync(hfCli)) {
+      logToFile('[browser-install] node.exe o hf_cli no encontrado, saltando');
+      return;
+    }
+
+    const env = buildEnv();
+    // Asegurar que PUPPETEER_CACHE_DIR es escribible (ya está en buildEnv)
+    const puppCacheDir = env.PUPPETEER_CACHE_DIR || path.join(app.getPath('userData'), 'puppeteer-cache');
+    fs.mkdirSync(puppCacheDir, { recursive: true });
+    env.PUPPETEER_CACHE_DIR = puppCacheDir;
+    // No usar browser del sistema durante doctor — dejar que descargue el suyo
+    delete env.HYPERFRAMES_BROWSER_PATH;
+
+    logToFile('[browser-install] Ejecutando hyperframes doctor...');
+    const child = require('child_process').spawn(
+      nodeExe, [hfCli, 'doctor', '--install-browser'],
+      { env, stdio: 'pipe', detached: false }
+    );
+    child.stdout.on('data', d => logToFile(`[doctor] ${d.toString().trim()}`));
+    child.stderr.on('data', d => logToFile(`[doctor:err] ${d.toString().trim()}`));
+    child.on('close', code => {
+      logToFile(`[browser-install] doctor salió con código ${code}`);
+      // Ahora que está instalado, actualizar HYPERFRAMES_BROWSER_PATH en el env del servidor
+      // El servidor se relanzará si es necesario, o lo cogerá al próximo render
+      const possibleShell = path.join(puppCacheDir, 'chrome-headless-shell', 'win64-stable', 'chrome-headless-shell-win64', 'chrome-headless-shell.exe');
+      if (fs.existsSync(possibleShell)) {
+        logToFile(`[browser-install] Chrome Headless Shell instalado: ${possibleShell}`);
+      }
+    });
+  } catch (e) {
+    logToFile(`[browser-install] Error: ${e.message}`);
+  }
 }
 
 // ── App lifecycle ─────────────────────────────────────────────────────────────
