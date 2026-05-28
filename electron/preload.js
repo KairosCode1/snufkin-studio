@@ -25,6 +25,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   activationCheck:    ()       => ipcRenderer.invoke('activation:check'),
   activationValidate: (code)   => ipcRenderer.invoke('activation:validate', code),
 
+  /** Auto-update */
+  updateInstall:  ()  => ipcRenderer.invoke('update:install'),
+  updateVersion:  ()  => ipcRenderer.invoke('update:version'),
+  onUpdateAvailable: (cb) => ipcRenderer.on('update:available', (_e, info) => cb(info)),
+  onUpdateProgress:  (cb) => ipcRenderer.on('update:progress',  (_e, info) => cb(info)),
+  onUpdateReady:     (cb) => ipcRenderer.on('update:ready',     (_e, info) => cb(info)),
+
   /** Frameless window controls */
   minimizeWindow: () => ipcRenderer.send('window:minimize'),
   maximizeWindow: () => ipcRenderer.send('window:maximize'),

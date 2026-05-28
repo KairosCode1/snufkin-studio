@@ -463,37 +463,36 @@ function createMainWindow() {
     // ── Comprobar actualizaciones (solo en app empaquetada) ────────────────
     if (autoUpdater && app.isPackaged) {
       autoUpdater.on('update-available', (info) => {
-        dialog.showMessageBox(mainWindow, {
-          type:    'info',
-          title:   'Actualización disponible',
-          message: `Nueva versión ${info.version} disponible`,
-          detail:  'Se descargará en segundo plano mientras trabajas.',
-          buttons: ['OK'],
-          icon:    null,
-        }).catch(() => {});
+        // Notificar al renderer para mostrar banner in-app (no diálogo nativo)
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('update:available', { version: info.version });
+        }
+      });
+
+      autoUpdater.on('download-progress', (progress) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('update:progress', {
+            percent: Math.round(progress.percent),
+          });
+        }
       });
 
       autoUpdater.on('update-downloaded', (info) => {
-        dialog.showMessageBox(mainWindow, {
-          type:    'info',
-          title:   'Actualización lista para instalar',
-          message: `SnufkinStudio ${info.version} está listo`,
-          detail:  'Reinicia la aplicación para instalar la nueva versión.',
-          buttons: ['Reiniciar ahora', 'Más tarde'],
-          icon:    null,
-        }).then((result) => {
-          if (result.response === 0) autoUpdater.quitAndInstall(false, true);
-        }).catch(() => {});
+        // Notificar al renderer — el usuario decide cuándo reiniciar
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('update:ready', { version: info.version });
+        }
       });
 
       autoUpdater.on('error', (err) => {
         console.error('[updater] error:', err.message);
+        logToFile(`[updater] error: ${err.message}`);
       });
 
       // Comprobar con un pequeño delay para no bloquear el arranque
       setTimeout(() => {
         autoUpdater.checkForUpdates().catch((e) => {
-          console.log('[updater] checkForUpdates falló:', e.message);
+          logToFile(`[updater] checkForUpdates falló: ${e.message}`);
         });
       }, 5000);
     }
@@ -715,6 +714,15 @@ function _hashCode(raw) {
     .update(raw.toUpperCase().replace(/-/g, ''))
     .digest('hex');
 }
+
+// ── IPC: Update actions ───────────────────────────────────────────────────────
+ipcMain.handle('update:install', () => {
+  if (autoUpdater) autoUpdater.quitAndInstall(true, true); // silent=true → sin UI
+});
+
+ipcMain.handle('update:version', () => {
+  return app.getVersion();
+});
 
 ipcMain.handle('activation:check', () => {
   return { activated: store.get('activated', false) === true };
