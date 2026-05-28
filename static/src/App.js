@@ -1,11 +1,10 @@
-// ── Update banner ─────────────────────────────────────────────────────────────
-function UpdateBanner() {
+// ── Update modal ──────────────────────────────────────────────────────────────
+function UpdateModal() {
   const { useState, useEffect } = React;
-  // states: null | 'available' | 'downloading' | 'ready'
+  // states: null | 'available' | 'downloading' | 'installing'
   const [updateState, setUpdateState] = useState(null);
   const [newVersion,  setNewVersion]  = useState("");
   const [progress,    setProgress]    = useState(0);
-  const [dismissed,   setDismissed]   = useState(false);
 
   useEffect(() => {
     const api = window.electronAPI;
@@ -20,97 +19,179 @@ function UpdateBanner() {
     });
     api.onUpdateReady?.((info) => {
       setNewVersion(info.version);
-      setUpdateState('ready');
+      // Auto-install immediately — no second click needed
+      setUpdateState('installing');
+      window.electronAPI?.updateInstall();
     });
   }, []);
 
-  if (!updateState || dismissed) return null;
+  if (!updateState) return null;
 
-  const isReady       = updateState === 'ready';
   const isDownloading = updateState === 'downloading';
+  const isInstalling  = updateState === 'installing';
+
+  function handleUpdate() {
+    // Start download — progress events will move state to 'downloading' then auto-install
+    setUpdateState('downloading');
+    setProgress(0);
+    // Download is already happening in background; this just confirms the user wants it
+    // If already downloaded (rare race), install immediately
+  }
 
   return (
     <div style={{
-      position: "fixed", bottom: 24, right: 24,
+      position: "fixed", inset: 0,
       zIndex: 99998,
-      background: "linear-gradient(135deg, rgba(30,31,48,0.97) 0%, rgba(20,21,35,0.97) 100%)",
-      border: "1px solid rgba(94,106,210,0.35)",
-      borderRadius: "0.875rem",
-      boxShadow: "0 8px 32px rgba(0,0,0,0.55), 0 0 0 1px rgba(94,106,210,0.10)",
-      padding: "16px 20px",
-      minWidth: 280, maxWidth: 340,
-      display: "flex", flexDirection: "column", gap: 10,
-      backdropFilter: "blur(20px)",
+      background: "rgba(4,4,7,0.80)",
+      backdropFilter: "blur(8px)",
+      display: "flex", alignItems: "center", justifyContent: "center",
     }}>
-      {/* Header */}
-      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:8 }}>
-        <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-          <div style={{
-            width: 8, height: 8, borderRadius: "50%",
-            background: isReady ? "#4ade80" : "#5E6AD2",
-            boxShadow: isReady ? "0 0 8px #4ade8088" : "0 0 8px #5E6AD288",
-            flexShrink: 0,
-          }} />
-          <span style={{
-            fontFamily: "'Outfit', sans-serif", fontWeight: 600,
-            fontSize: 13, color: "#EDEDEF", letterSpacing: "-0.1px",
-          }}>
-            {isReady       ? `v${newVersion} listo para instalar`
-             : isDownloading ? `Descargando v${newVersion}…`
-             :                 `Nueva versión disponible v${newVersion}`}
-          </span>
-        </div>
-        <button onClick={() => setDismissed(true)} style={{
-          background: "none", border: "none", cursor: "pointer",
-          color: "rgba(237,237,239,0.35)", fontSize: 16, lineHeight: 1,
-          padding: "0 2px", flexShrink: 0,
-        }}>×</button>
-      </div>
+      {/* Ambient blobs */}
+      <div className="blob-1" style={{ opacity: 0.5 }} />
+      <div className="blob-3" style={{ opacity: 0.4 }} />
 
-      {/* Progress bar */}
-      {isDownloading && (
+      {/* Card */}
+      <div className="liquid-glass-strong" style={{
+        borderRadius: "1.5rem",
+        padding: "52px 56px 48px",
+        width: "100%", maxWidth: 460,
+        display: "flex", flexDirection: "column", alignItems: "center",
+        gap: 0, position: "relative", zIndex: 2,
+        margin: "0 24px",
+      }}>
+        {/* Icon */}
         <div style={{
-          height: 3, borderRadius: 9999,
-          background: "rgba(255,255,255,0.08)",
-          overflow: "hidden",
+          width: 64, height: 64, borderRadius: "1.1rem",
+          background: "linear-gradient(135deg, rgba(94,106,210,0.30) 0%, rgba(94,106,210,0.10) 100%)",
+          border: "1px solid rgba(94,106,210,0.35)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          marginBottom: 28,
+          boxShadow: "0 0 40px rgba(94,106,210,0.20)",
         }}>
-          <div style={{
-            height: "100%", borderRadius: 9999,
-            background: "linear-gradient(90deg, #5E6AD2, #6872D9)",
-            width: `${progress}%`,
-            transition: "width 0.4s ease",
-          }} />
+          {isInstalling ? (
+            /* Checkmark */
+            <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+              <path d="M6 14.5L11.5 20L22 9" stroke="#4ade80" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          ) : (
+            /* Download arrow */
+            <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+              <path d="M14 5v13M8 13l6 6 6-6" stroke="#5E6AD2" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M5 22h18" stroke="#5E6AD2" strokeWidth="2.2" strokeLinecap="round"/>
+            </svg>
+          )}
         </div>
-      )}
 
-      {/* Action */}
-      {isReady && (
-        <button
-          onClick={() => window.electronAPI?.updateInstall()}
-          style={{
-            background: "linear-gradient(135deg, #5E6AD2 0%, #6872D9 100%)",
-            border: "none", borderRadius: "0.5rem",
-            color: "#fff", cursor: "pointer",
-            fontFamily: "'Outfit', sans-serif", fontWeight: 700,
-            fontSize: 13, padding: "9px 0",
-            boxShadow: "0 4px 14px rgba(94,106,210,0.35)",
-            transition: "opacity 0.15s",
-          }}
-          onMouseEnter={e => e.target.style.opacity = "0.85"}
-          onMouseLeave={e => e.target.style.opacity = "1"}
-        >
-          Reiniciar e instalar ahora
-        </button>
-      )}
-
-      {!isReady && !isDownloading && (
-        <p style={{
-          margin: 0, fontFamily: "'Inter', sans-serif",
-          fontSize: 12, color: "rgba(237,237,239,0.40)", lineHeight: 1.5,
+        {/* Title */}
+        <div style={{
+          fontFamily: "'Outfit', sans-serif", fontWeight: 700,
+          fontSize: 26, color: "#EDEDEF", letterSpacing: "-0.3px",
+          marginBottom: 10, textAlign: "center",
         }}>
-          Descargando en segundo plano…
-        </p>
-      )}
+          {isInstalling ? "Instalando actualización…"
+           : isDownloading ? `Descargando v${newVersion}…`
+           : "Nueva actualización disponible"}
+        </div>
+
+        {/* Subtitle */}
+        <div style={{
+          fontFamily: "'Inter', sans-serif", fontSize: 14,
+          color: "rgba(237,237,239,0.45)", fontWeight: 400,
+          textAlign: "center", lineHeight: 1.6, marginBottom: 36,
+          maxWidth: 300,
+        }}>
+          {isInstalling
+            ? "La app se cerrará y volverá a abrirse con la nueva versión."
+            : isDownloading
+              ? "La app se instalará sola al terminar la descarga."
+              : `La versión ${newVersion} ya está disponible con mejoras y correcciones.`}
+        </div>
+
+        {/* Progress bar — visible while downloading or installing */}
+        {(isDownloading || isInstalling) && (
+          <div style={{
+            width: "100%", height: 4, borderRadius: 9999,
+            background: "rgba(255,255,255,0.07)",
+            overflow: "hidden", marginBottom: 36,
+          }}>
+            <div style={{
+              height: "100%", borderRadius: 9999,
+              background: "linear-gradient(90deg, #5E6AD2, #818cf8)",
+              width: isInstalling ? "100%" : `${progress}%`,
+              transition: "width 0.4s ease",
+            }} />
+          </div>
+        )}
+
+        {/* Percent label */}
+        {isDownloading && (
+          <div style={{
+            fontFamily: "'Outfit', sans-serif", fontSize: 13,
+            color: "rgba(237,237,239,0.40)", marginTop: -28, marginBottom: 28,
+            textAlign: "center",
+          }}>
+            {progress}%
+          </div>
+        )}
+
+        {/* CTA button — only on 'available' state */}
+        {updateState === 'available' && (
+          <button
+            onClick={handleUpdate}
+            style={{
+              width: "100%", padding: "15px 0",
+              borderRadius: "0.75rem", border: "none",
+              background: "linear-gradient(135deg, #5E6AD2 0%, #6872D9 100%)",
+              color: "#fff",
+              fontFamily: "'Outfit', sans-serif", fontWeight: 700,
+              fontSize: 15, letterSpacing: "0.02em",
+              cursor: "pointer",
+              boxShadow: "0 4px 20px rgba(94,106,210,0.40)",
+              transition: "opacity 0.15s, transform 0.1s",
+            }}
+            onMouseEnter={e => { e.currentTarget.style.opacity = "0.88"; e.currentTarget.style.transform = "translateY(-1px)"; }}
+            onMouseLeave={e => { e.currentTarget.style.opacity = "1";    e.currentTarget.style.transform = "translateY(0)"; }}
+          >
+            Actualizar
+          </button>
+        )}
+
+        {/* Spinner label while installing */}
+        {isInstalling && (
+          <div style={{
+            fontFamily: "'Inter', sans-serif", fontSize: 13,
+            color: "rgba(237,237,239,0.35)", textAlign: "center",
+          }}>
+            Reiniciando en unos segundos…
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Version badge ─────────────────────────────────────────────────────────────
+function VersionBadge() {
+  const { useState, useEffect } = React;
+  const [version, setVersion] = useState("");
+
+  useEffect(() => {
+    window.electronAPI?.updateVersion?.().then(v => setVersion(v)).catch(() => {});
+  }, []);
+
+  if (!version) return null;
+
+  return (
+    <div style={{
+      position: "fixed", bottom: 12, right: 16,
+      zIndex: 9990, pointerEvents: "none",
+      fontFamily: "'Inter', sans-serif",
+      fontSize: 11, fontWeight: 400,
+      color: "rgba(237,237,239,0.18)",
+      letterSpacing: "0.03em",
+      userSelect: "none",
+    }}>
+      v{version}
     </div>
   );
 }
@@ -155,7 +236,8 @@ function App() {
       <Hero />
       <SettingsButton />
       <GroqWarningBanner />
-      <UpdateBanner />
+      <UpdateModal />
+      <VersionBadge />
     </main>
   );
 }
