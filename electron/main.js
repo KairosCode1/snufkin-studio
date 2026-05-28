@@ -675,8 +675,8 @@ ipcMain.handle('settings:delete-key', async () => {
 // Códigos válidos almacenados como SHA-256 (hex) del código en mayúsculas sin guiones.
 // Para generar un nuevo código: node -e "const c=require('crypto');console.log(c.createHash('sha256').update('SNUFXXXX').digest('hex'))"
 const VALID_CODE_HASHES = new Set([
-  // 1234xx1234
-  '83c553f3323fe5c7fe284f9ff746373de2916d32a4ecbf640c14fffd7aa0bde1',
+  // SNUF-1234-AELI-5678
+  '3e67326857b4c5344256bb0c9b90e663d82c11a72dbb3e23ba6be3b0b80e9ec1',
 ]);
 
 const crypto = require('crypto');
