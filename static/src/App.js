@@ -181,15 +181,33 @@ function VersionBadge() {
 
   return (
     <div style={{
-      position: "fixed", bottom: 12, right: 16,
+      position: "fixed", bottom: 14, right: 18,
       zIndex: 9990, pointerEvents: "none",
-      fontFamily: "'Inter', sans-serif",
-      fontSize: 11, fontWeight: 400,
-      color: "rgba(237,237,239,0.18)",
-      letterSpacing: "0.03em",
+      display: "flex", alignItems: "center", gap: 7,
       userSelect: "none",
     }}>
-      v{version}
+      <span style={{
+        fontFamily: "'Outfit', sans-serif",
+        fontSize: 13, fontWeight: 600,
+        color: "rgba(237,237,239,0.22)",
+        letterSpacing: "0.02em",
+        lineHeight: 1,
+      }}>
+        v{version}
+      </span>
+      <span style={{
+        fontFamily: "'Outfit', sans-serif",
+        fontSize: 10, fontWeight: 700,
+        color: "rgba(94,106,210,0.70)",
+        letterSpacing: "0.12em",
+        lineHeight: 1,
+        background: "rgba(94,106,210,0.12)",
+        border: "1px solid rgba(94,106,210,0.25)",
+        borderRadius: 4,
+        padding: "2px 5px",
+      }}>
+        BETA
+      </span>
     </div>
   );
 }
