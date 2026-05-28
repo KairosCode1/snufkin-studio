@@ -19,9 +19,9 @@ function UpdateModal() {
     });
     api.onUpdateReady?.((info) => {
       setNewVersion(info.version);
-      // Auto-install immediately — no second click needed
+      // Descarga completa → instalar en silencio y reabrir
       setUpdateState('installing');
-      window.electronAPI?.updateInstall();
+      setTimeout(() => window.electronAPI?.updateInstall(), 800);
     });
   }, []);
 
@@ -31,11 +31,9 @@ function UpdateModal() {
   const isInstalling  = updateState === 'installing';
 
   function handleUpdate() {
-    // Start download — progress events will move state to 'downloading' then auto-install
     setUpdateState('downloading');
     setProgress(0);
-    // Download is already happening in background; this just confirms the user wants it
-    // If already downloaded (rare race), install immediately
+    window.electronAPI?.updateDownload();
   }
 
   return (

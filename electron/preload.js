@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   activationValidate: (code)   => ipcRenderer.invoke('activation:validate', code),
 
   /** Auto-update */
+  updateDownload: ()  => ipcRenderer.invoke('update:download'),
   updateInstall:  ()  => ipcRenderer.invoke('update:install'),
   updateVersion:  ()  => ipcRenderer.invoke('update:version'),
   onUpdateAvailable: (cb) => ipcRenderer.on('update:available', (_e, info) => cb(info)),

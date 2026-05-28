@@ -10,8 +10,8 @@ const fs     = require('fs');
 let autoUpdater = null;
 try {
   autoUpdater = require('electron-updater').autoUpdater;
-  autoUpdater.autoDownload         = true;  // descarga en segundo plano
-  autoUpdater.autoInstallOnAppQuit = true;  // instala al cerrar si ya descargó
+  autoUpdater.autoDownload         = false; // el usuario decide cuándo descargar
+  autoUpdater.autoInstallOnAppQuit = false; // solo instalar cuando el usuario pulse el botón
 } catch (_) {
   // en dev, electron-updater puede no estar instalado aún
   console.log('[updater] electron-updater no disponible (modo dev)');
@@ -716,8 +716,15 @@ function _hashCode(raw) {
 }
 
 // ── IPC: Update actions ───────────────────────────────────────────────────────
+ipcMain.handle('update:download', () => {
+  if (autoUpdater) autoUpdater.downloadUpdate().catch(e => logToFile(`[updater] download error: ${e.message}`));
+});
+
 ipcMain.handle('update:install', () => {
-  if (autoUpdater) autoUpdater.quitAndInstall(true, true); // silent=true → sin UI
+  if (autoUpdater) {
+    // isSilent=true → sin ventana NSIS, isForceRunAfter=true → reabre la app
+    autoUpdater.quitAndInstall(true, true);
+  }
 });
 
 ipcMain.handle('update:version', () => {
