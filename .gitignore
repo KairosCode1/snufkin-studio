@@ -25,3 +25,11 @@ projects/
 
 # Archivos de trabajo temporales
 work-*/
+
+# Artefactos de PyInstaller (se regeneran en cada build)
+build/pyinstaller_work/
+
+# Ficheros de test/debug temporales
+test-debug-*.txt
+server_verify_log.txt
+*_verify_log.txt

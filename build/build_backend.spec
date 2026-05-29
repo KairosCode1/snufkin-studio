@@ -70,11 +70,18 @@ a = Analysis(
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=None)
 
+# ── Onefile: todo empaquetado en un único server.exe ─────────────────────────
+# Ventaja: NSIS instala 1 archivo en vez de ~500 → Windows Defender lo escanea
+# una sola vez → instalación en 20-30 s en vez de 2 minutos.
+# Coste: PyInstaller extrae a %TEMP% en cada arranque (~3-10 s, absorbido por
+# la pantalla de carga de Electron que ya dura 4.5 s mínimo).
 exe = EXE(
     pyz,
     a.scripts,
-    [],
-    exclude_binaries=True,
+    a.binaries,    # incluir binarios en el .exe (no en carpeta _internal/)
+    a.zipfiles,
+    a.datas,
+    # exclude_binaries=True → NO (eso es para onedir con COLLECT)
     name='server',
     debug=False,
     bootloader_ignore_signals=False,
@@ -88,14 +95,4 @@ exe = EXE(
     entitlements_file=None,
     icon=None,
 )
-
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    name='server',
-)
+# Sin COLLECT: onefile no necesita agrupar en directorio

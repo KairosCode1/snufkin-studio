@@ -1,6 +1,6 @@
 {
   "name": "snufkin-studio",
-  "version": "1.1.11",
+  "version": "1.1.12",
   "description": "SnufkinStudio — Auto Captions",
   "author": "SnufkinStudio",
   "main": "electron/main.js",
@@ -52,8 +52,8 @@
     },
     "extraResources": [
       {
-        "from": "dist/server/server/",
-        "to": "server/"
+        "from": "dist/server/server.exe",
+        "to": "server/server.exe"
       },
       {
         "from": "resources/tools/",

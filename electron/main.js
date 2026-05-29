@@ -1,10 +1,14 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, dialog, shell, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Menu, Notification } = require('electron');
 const path   = require('path');
 const http   = require('http');
 const { spawn } = require('child_process');
 const fs     = require('fs');
+
+// ── AppUserModelID: garantiza que Windows asocie siempre los accesos directos
+//    con esta app, incluso tras actualizaciones. DEBE establecerse antes de ready.
+app.setAppUserModelId('com.snufkinstudio.autocaptions');
 
 // ── Auto-updater (solo en build empaquetado, no en dev) ───────────────────────
 let autoUpdater = null;
@@ -780,10 +784,22 @@ ipcMain.handle('update:download', () => {
 });
 
 ipcMain.handle('update:install', () => {
-  if (autoUpdater) {
+  if (!autoUpdater) return;
+  // Mostrar notificación nativa de Windows antes de cerrar.
+  // Las notificaciones persisten en el Centro de Actividades aunque la app se cierre,
+  // así el usuario sabe que la instalación está en curso y la app volverá a abrirse.
+  try {
+    new Notification({
+      title: 'Aelios Edition — Instalando actualización',
+      body:  'La instalación está en curso. La app se abrirá sola cuando termine.',
+      silent: true,
+    }).show();
+  } catch (_) {}
+  // Pequeño delay para que la notificación se registre antes de que el proceso muera
+  setTimeout(() => {
     // isSilent=true → sin ventana NSIS, isForceRunAfter=true → reabre la app
     autoUpdater.quitAndInstall(true, true);
-  }
+  }, 600);
 });
 
 ipcMain.handle('update:version', () => {
