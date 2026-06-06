@@ -61,9 +61,23 @@ echo        (Esto puede tardar varios minutos...)
 npm run release
 
 echo.
+echo  [5/5] Actualizando acceso directo del escritorio...
+REM Eliminar instaladores viejos con nombre de version en el escritorio
+for %%f in ("%USERPROFILE%\Desktop\SnufkinStudio Setup *.exe") do del /f /q "%%f" 2>nul
+for %%f in ("%USERPROFILE%\Desktop\SnufkinStudio-Setup-*.exe") do del /f /q "%%f" 2>nul
+REM Copiar el script instalador inteligente al escritorio (siempre apunta a latest)
+if exist "%~dp0scripts\Instalar SnufkinStudio.bat" (
+    copy /y "%~dp0scripts\Instalar SnufkinStudio.bat" "%USERPROFILE%\Desktop\Instalar SnufkinStudio.bat" >nul
+    echo  [OK] Acceso directo del escritorio actualizado.
+) else (
+    echo  [!] Script instalador no encontrado en scripts\ - escritorio no actualizado.
+)
+
+echo.
 echo  =====================================================
 echo   Listo! Version %NEW_VER% publicada en GitHub.
-echo   Tus usuarios la recibiran automaticamente.
+echo   Los usuarios ya instalados se actualizan solos.
+echo   Nuevos usuarios: usa "Instalar SnufkinStudio.bat"
 echo  =====================================================
 echo.
 pause
