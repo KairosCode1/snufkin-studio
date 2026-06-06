@@ -45,6 +45,49 @@ FFMPEG_EXE  = os.environ.get("FFMPEG_EXE",  "ffmpeg")
 FFPROBE_EXE = os.environ.get("FFPROBE_EXE", "ffprobe")
 
 
+# ── GSAP local (CRÍTICO: evita depender del CDN durante el render headless) ──────
+# El render de HyperFrames corre en Chrome headless SIN red garantizada. Si GSAP se
+# carga desde CDN y la red falla/tarda, `gsap.timeline()` lanza "gsap is not defined",
+# la timeline 'main' NUNCA se registra, y los captions se capturan en su estado CSS
+# estático → TODOS los grupos visibles a la vez = superposición (texto doble/3 líneas).
+# Embebemos GSAP inline para que SIEMPRE esté disponible offline.
+_GSAP_INLINE_CACHE = None
+def _load_gsap_inline() -> str:
+    global _GSAP_INLINE_CACHE
+    if _GSAP_INLINE_CACHE is not None:
+        return _GSAP_INLINE_CACHE
+    candidates = [
+        BASE_DIR / "resources" / "vendor" / "gsap.min.js",          # dev: project root
+        BASE_DIR.parent / "vendor" / "gsap.min.js",                  # frozen: <app>/resources/vendor
+        BASE_DIR / "vendor" / "gsap.min.js",
+        Path(__file__).parent / "resources" / "vendor" / "gsap.min.js",
+    ]
+    # Derivado de NPX_CMD (frozen): node vive en <app>/resources/tools/node → vendor hermano
+    _npx = os.environ.get("NPX_CMD", "")
+    if _npx:
+        try:
+            _tools = Path(_npx).parent.parent          # .../tools/node → .../tools
+            candidates.append(_tools.parent / "vendor" / "gsap.min.js")  # resources/vendor
+            candidates.append(_tools / "vendor" / "gsap.min.js")         # tools/vendor
+        except Exception:
+            pass
+    for p in candidates:
+        try:
+            if p.is_file():
+                src = p.read_text(encoding="utf-8")
+                if "gsap" in src:
+                    _GSAP_INLINE_CACHE = (
+                        "<script>/* GSAP 3 (local/offline) — embebido para el render headless */\n"
+                        + src + "\n</script>"
+                    )
+                    return _GSAP_INLINE_CACHE
+        except Exception:
+            pass
+    # Fallback: CDN (mejor que nada, pero arriesgado sin red en el render).
+    _GSAP_INLINE_CACHE = '<script src="https://cdn.jsdelivr.net/npm/gsap@3/dist/gsap.min.js"></script>'
+    return _GSAP_INLINE_CACHE
+
+
 def _get_groq_key() -> str:
     """Lee la API key de Groq desde el entorno (seteada por Electron o config.json)."""
     key = os.environ.get("GROQ_API_KEY", "")
@@ -265,6 +308,7 @@ def compute_display_timing(groups: list, duration: float,
             inner-div sin data-*                     → gestionado por GSAP (solo animacion)
     """
     last_emphasis_cleanup = 0.0
+    last_active_group = None  # track last non-skipped group to prevent overlap
     for group in groups:
         raw_start = group["words"][0]["s"]
         raw_end   = min(group["end"], duration - 0.05)
@@ -285,6 +329,19 @@ def compute_display_timing(groups: list, duration: float,
             group["display_start"] = display_start
             group["display_dur"]   = display_dur
             group["delay"]         = round(delay, 3)
+            # Truncate the previous active clip if this one starts before it ends.
+            # This happens when an emphasis group absorbs the previous word
+            # (key_word_index==0), causing its display_start to fall inside the
+            # previous clip's range → two clips visible simultaneously.
+            if last_active_group is not None:
+                prev_end = round(
+                    last_active_group["display_start"] + last_active_group["display_dur"], 3
+                )
+                if prev_end > display_start:
+                    last_active_group["display_dur"] = round(
+                        max(0.05, display_start - last_active_group["display_start"] - 0.001), 3
+                    )
+            last_active_group = group
 
         if is_emph and not group.get("skip"):
             last_emphasis_cleanup = display_end
@@ -335,7 +392,9 @@ def build_html(video_filename: str, duration: float, groups: list, lang: str = "
                style: str = "style1", orientation: str = "vertical",
                highlight_color: str = "#FFE033", enable_zoom: bool = True,
                caption_pos: int = 15, caption_font: str = "outfit",
-               caption_anim: str = "default") -> str:
+               caption_anim: str = "default",
+               caption_case: str = "lower", caption_size: int = 100,
+               caption_stroke: bool = False) -> str:
     # Pre-calcular timing usando el sistema nativo de clips de HyperFrames
     groups = compute_display_timing(groups, duration)
 
@@ -354,14 +413,15 @@ def build_html(video_filename: str, duration: float, groups: list, lang: str = "
         words   = group["words"]
         n       = len(words)
 
-        if style in ("style2", "style_doc", "style3", "style_retro"):
+        if style in ("style2", "style_doc", "style3", "style_retro", "style_sub", "style_bold"):
             group_cls = "caption-group"
         else:
             group_cls = "caption-group emphasis-group" if is_emph else "caption-group"
         kw_idx = group.get("key_word_index") if group.get("key_word_index") is not None else 1
 
         # Style1 emphasis: vertical layout — before above, big in center, after below
-        if is_emph and style not in ("style2", "style_doc", "style3", "style_retro"):
+        # Horizontal styles (doc/sub/bold) SIEMPRE fila plana de 1 línea → excluidos
+        if is_emph and style not in ("style2", "style_doc", "style3", "style_retro", "style_sub", "style_bold"):
             before_spans, big_span_html, after_spans = [], None, []
             for wi, word in enumerate(words):
                 sc   = get_word_style_py(True, wi, n, kw_idx)
@@ -392,14 +452,14 @@ def build_html(video_filename: str, duration: float, groups: list, lang: str = "
         else:
             spans = []
             for wi, word in enumerate(words):
-                if style in ("style_doc", "style3", "style_retro"):
+                if style in ("style_doc", "style3", "style_retro", "style_sub", "style_bold"):
                     sc = ""
                 elif is_emph:
                     sc = get_word_style_py(True, wi, n, kw_idx)
                 else:
                     sc = word.get("style") or ""   # style-underline o vacío
                 cls  = f"caption-word{' ' + sc if sc else ''}"
-                if style in ("style2", "style_doc", "style3", "style_retro"):
+                if style in ("style2", "style_doc", "style3", "style_retro", "style_sub", "style_bold"):
                     raw = word["t"].lower()
                 else:
                     raw  = word["t"].upper() if sc == "style-big" else word["t"].lower()
@@ -456,6 +516,12 @@ def build_html(video_filename: str, duration: float, groups: list, lang: str = "
         body_cls = ' class="s3"'
     elif style == "style_retro":
         body_cls = ' class="retro"'
+    elif style == "style_cinematic":
+        body_cls = ' class="cinematic"'
+    elif style == "style_sub":
+        body_cls = ' class="subdoc"'
+    elif style == "style_bold":
+        body_cls = ' class="boldstyle"'
     else:
         body_cls = ""
 
@@ -608,18 +674,21 @@ def build_html(video_filename: str, duration: float, groups: list, lang: str = "
     });"""
     elif style == "style_doc":
         extra_css = """
-    /* ── STYLE DOC — subtítulo documental elegante, Playfair Display ─────── */
+    /* ── STYLE DOC — subtítulo documental elegante, Raleway ─────────────── */
     .doc .caption-group {
+      opacity: 0;
       flex-direction: row;
-      flex-wrap: wrap;
+      flex-wrap: nowrap;
       align-items: center;
+      justify-content: center;
       gap: 0px 14px;
+      overflow: hidden;
     }
     .doc .caption-word {
       font-family: 'Raleway', 'Helvetica Neue', Arial, sans-serif;
       font-weight: 300;
       font-style: normal;
-      font-size: 58px;
+      font-size: 26px;
       color: #ffffff;
       text-transform: none;
       letter-spacing: 2.5px;
@@ -642,8 +711,111 @@ def build_html(video_filename: str, duration: float, groups: list, lang: str = "
       var gs = '#cg-' + gi;
       var ds = g.ds;
       var dd = g.dd;
-      tl.from(gs, { opacity: 0, duration: 0.20, ease: 'power1.out' }, ds);
+      tl.to(gs, { opacity: 1, duration: 0.20, ease: 'power1.out' }, ds);
+      tl.to(gs, { opacity: 0, duration: 0.15, ease: 'power1.in'  }, ds + dd - 0.15);
+    });"""
+    elif style == "style_cinematic":
+        extra_css = """
+    /* ── STYLE CINEMATIC — texto dorado sobre barra negra, estilo cine ────── */
+    .cinematic .caption-group {
+      flex-direction: row;
+      flex-wrap: nowrap;
+      align-items: center;
+      justify-content: center;
+      gap: 0 14px;
+      background: rgba(0,0,0,0.92);
+      padding: 18px 80px;
+      left: 0 !important;
+      right: 0 !important;
+      overflow: hidden;
+    }
+    .cinematic .caption-word {
+      font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif;
+      font-weight: 400;
+      font-style: normal;
+      font-size: 46px;
+      color: #F5C518;
+      text-transform: none;
+      letter-spacing: 0.8px;
+      line-height: 1.25;
+      text-shadow: none;
+    }"""
+        anim_code = """ANIM.forEach(function(g) {
+      var gs = '#cg-' + g.gi;
+      var ds = g.ds;
+      var dd = g.dd;
+      tl.from(gs, { opacity: 0, duration: 0.22, ease: 'power1.out' }, ds);
       tl.to(gs,   { opacity: 0, duration: 0.15, ease: 'power1.in'  }, ds + dd - 0.15);
+    });"""
+    elif style == "style_sub":
+        extra_css = """
+    /* ── STYLE SUB — subtítulo limpio estilo Netflix / documental ────────── */
+    .subdoc .caption-group {
+      opacity: 0;
+      flex-direction: row;
+      flex-wrap: nowrap;
+      align-items: center;
+      justify-content: center;
+      gap: 0 12px;
+      background: rgba(0,0,0,0.72);
+      padding: 14px 60px;
+      left: 0 !important;
+      right: 0 !important;
+      overflow: hidden;
+    }
+    .subdoc .caption-word {
+      font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif;
+      font-weight: 400;
+      font-style: normal;
+      font-size: 22px;
+      color: #ffffff;
+      text-transform: none;
+      letter-spacing: 0.3px;
+      line-height: 1.25;
+      text-shadow: none;
+    }"""
+        anim_code = """ANIM.forEach(function(g) {
+      var gs = '#cg-' + g.gi;
+      var ds = g.ds;
+      var dd = g.dd;
+      tl.to(gs, { opacity: 1, duration: 0.20, ease: 'power1.out' }, ds);
+      tl.to(gs, { opacity: 0, duration: 0.15, ease: 'power1.in'  }, ds + dd - 0.15);
+    });"""
+    elif style == "style_bold":
+        extra_css = """
+    /* ── STYLE BOLD — subtítulo bold blanco, contundente ────────────────── */
+    .boldstyle .caption-group {
+      opacity: 0;
+      flex-direction: row;
+      flex-wrap: nowrap;
+      align-items: center;
+      justify-content: center;
+      gap: 0 10px;
+      overflow: hidden;
+    }
+    .boldstyle .caption-word {
+      font-family: 'Outfit', sans-serif;
+      font-weight: 900;
+      font-style: normal;
+      font-size: 29px;
+      color: #ffffff;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      line-height: 1.15;
+      text-shadow:
+        -3px -3px 0 rgba(0,0,0,0.95),
+         3px -3px 0 rgba(0,0,0,0.95),
+        -3px  3px 0 rgba(0,0,0,0.95),
+         3px  3px 0 rgba(0,0,0,0.95),
+         0    3px 12px rgba(0,0,0,0.99),
+         0    6px 28px rgba(0,0,0,0.80);
+    }"""
+        anim_code = """ANIM.forEach(function(g) {
+      var gs = '#cg-' + g.gi;
+      var ds = g.ds;
+      var dd = g.dd;
+      tl.to(gs, { opacity: 1, duration: 0.18, ease: 'power2.out' }, ds);
+      tl.to(gs, { opacity: 0, duration: 0.14, ease: 'power1.in'  }, ds + dd - 0.14);
     });"""
     else:
         extra_css = ""
@@ -710,15 +882,59 @@ def build_html(video_filename: str, duration: float, groups: list, lang: str = "
       top: auto !important;
     }}"""
 
-    # Font override — only for non-specialised styles (retro/doc use fixed fonts)
+    # ── nowrap enforcement for horizontal (always 1 line) ──────────────────────
+    if orientation == "horizontal":
+        pos_override_css += """
+    /* ── Horizontal: siempre 1 línea ── */
+    #root .caption-group {
+      flex-wrap: nowrap !important;
+      overflow: hidden !important;
+    }"""
+
+    # ── Text case override ───────────────────────────────────────────────────────
+    if caption_case == "upper":
+        pos_override_css += """
+    /* ── Case: mayúsculas ── */
+    #root .caption-word { text-transform: uppercase !important; }"""
+    elif caption_case == "normal":
+        pos_override_css += """
+    /* ── Case: original ── */
+    #root .caption-word { text-transform: none !important; }"""
+    # "lower" → se mantiene el text-transform: lowercase del CSS base
+
+    # ── Font-size override (caption_size 70-130 = % del default) ────────────────
+    if caption_size != 100:
+        _f = caption_size / 100.0
+        _sz_normal = max(28, round(56 * _f))
+        _sz_small  = max(32, round(66 * _f))
+        _sz_big    = max(52, round(124 * _f))
+        pos_override_css += f"""
+    /* ── Size override ── */
+    #root .caption-word {{ font-size: {_sz_normal}px !important; }}
+    #root .caption-word.style-small {{ font-size: {_sz_small}px !important; }}
+    #root .caption-word.style-big {{ font-size: {_sz_big}px !important; }}"""
+
+    # ── Stroke override (horizontal only, opt-in) ──────────────────────────────
+    if caption_stroke and orientation == "horizontal":
+        pos_override_css += """
+    /* ── Stroke horizontal ── */
+    #root .caption-word {
+      -webkit-text-stroke: 2px rgba(0,0,0,0.90) !important;
+      paint-order: stroke fill !important;
+    }"""
+
+    # Font override — only for non-specialised styles (retro/doc/cinematic/sub use fixed fonts)
     _font_family, _font_weight = _FONT_CSS_MAP.get(caption_font, _FONT_CSS_MAP["outfit"])
-    _is_generic_style = style not in ("style_retro", "style_doc")
+    _is_generic_style = style not in ("style_retro", "style_doc", "style_cinematic", "style_sub")
     font_override_css = f"""
     /* ── Font override ── */
     #root .caption-word {{
       font-family: {_font_family} !important;
       font-weight: {_font_weight} !important;
     }}""" if _is_generic_style and caption_font != "outfit" else ""
+
+    # GSAP local embebido — sin esto, gsap no carga en el render headless y los captions se superponen.
+    gsap_inline = _load_gsap_inline()
 
     return f"""<!doctype html>
 <html lang="{lang}">
@@ -729,7 +945,9 @@ def build_html(video_filename: str, duration: float, groups: list, lang: str = "
   <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:ital,wght@0,300;0,400;0,700;0,900;1,300;1,400&family=Dancing+Script:wght@700&family=Raleway:wght@300;400&family=Playfair+Display:ital,wght@1,700;1,800;1,900&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
-  <!-- GSAP is injected by HyperFrames renderer — no external CDN needed here -->
+  <!-- GSAP embebido LOCAL (offline): garantiza que gsap.timeline() existe en el render
+       headless aunque no haya red. Sin esto, los captions se superponen. -->
+  {gsap_inline}
   <style>
     * {{ margin: 0; padding: 0; box-sizing: border-box; }}
     html, body {{
@@ -746,7 +964,7 @@ def build_html(video_filename: str, duration: float, groups: list, lang: str = "
       justify-content: center;
       align-items: center;
       flex-wrap: wrap;
-      gap: 0px 16px;
+      gap: 10px 16px;
     }}
 
     /* ── Grupos énfasis: columna centrada —
@@ -1104,11 +1322,114 @@ def _render_html_to_video(project_dir: Path, output_file: Path, progress_q=None)
     return True
 
 
+def _srt_timestamp(seconds: float) -> str:
+    """Convierte segundos a timestamp SRT: HH:MM:SS,mmm"""
+    if seconds < 0:
+        seconds = 0
+    ms = int(round(seconds * 1000))
+    h = ms // 3_600_000
+    ms -= h * 3_600_000
+    m = ms // 60_000
+    ms -= m * 60_000
+    s = ms // 1000
+    ms -= s * 1000
+    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+
+def transcribe_to_files(video_path: Path, language: str, model: str, progress_q=None) -> dict:
+    """
+    Transcribe un audio/vídeo con Whisper y genera ficheros SRT + TXT.
+    NO renderiza vídeo ni captions — solo extrae el texto.
+
+    Devuelve:
+      {"srt": Path, "txt": Path, "preview": str, "segments": int, "duration": float}
+    """
+    name = video_path.stem
+    _emit(progress_q, f">> Transcribiendo: {video_path.name}")
+
+    project_dir = PROJECTS_DIR / name
+    project_dir.mkdir(parents=True, exist_ok=True)
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    # 1. Cargar modelo
+    _emit(progress_q, "TSTEP:1:Cargando modelo Whisper...")
+    try:
+        from faster_whisper import WhisperModel
+        whisper_model = WhisperModel(model, device="cpu", compute_type="int8")
+    except Exception as e:
+        _emit(progress_q, f"ERROR:No se pudo cargar Whisper: {e}")
+        raise
+
+    # 2. Transcribir
+    _emit(progress_q, "TSTEP:2:Transcribiendo audio...")
+    try:
+        segments, audio_info = whisper_model.transcribe(
+            str(video_path),
+            language=language,
+            word_timestamps=False,
+            vad_filter=True,
+            condition_on_previous_text=False,
+            beam_size=5,
+        )
+        duration = round(float(audio_info.duration), 3)
+    except Exception as e:
+        _emit(progress_q, f"ERROR:Error en transcripción: {e}")
+        raise
+
+    # 3. Iterar el generador — aquí ocurre la transcripción real (faster-whisper es lazy)
+    srt_lines = []
+    txt_parts = []
+    idx = 0
+    for seg in segments:
+        text = (seg.text or "").strip()
+        if not text:
+            continue
+        idx += 1
+        srt_lines.append(str(idx))
+        srt_lines.append(f"{_srt_timestamp(seg.start)} --> {_srt_timestamp(seg.end)}")
+        srt_lines.append(text)
+        srt_lines.append("")          # línea en blanco separadora
+        txt_parts.append(text)
+
+    if idx == 0:
+        _emit(progress_q, "ERROR:No se detectó voz en el archivo")
+        raise ValueError("Transcripción vacía")
+
+    # 4. Escribir ficheros (rápido — la transcripción ya terminó)
+    _emit(progress_q, "TSTEP:3:Generando ficheros...")
+    srt_content = "\n".join(srt_lines).strip() + "\n"
+    txt_content = " ".join(txt_parts).strip() + "\n"
+
+    srt_path = OUTPUT_DIR / f"{name}.srt"
+    txt_path = OUTPUT_DIR / f"{name}.txt"
+    srt_path.write_text(srt_content, encoding="utf-8")
+    txt_path.write_text(txt_content, encoding="utf-8")
+
+    # Preview: primeros ~600 caracteres del texto plano
+    preview = txt_content.strip()
+    if len(preview) > 1200:
+        preview = preview[:1200].rsplit(" ", 1)[0] + " …"
+
+    _emit(progress_q, f"TDONE:{idx}")
+    log.info(f"  Transcripción: {idx} segmentos, {duration}s → {srt_path.name}, {txt_path.name}")
+
+    return {
+        "srt": srt_path,
+        "txt": txt_path,
+        "preview": preview,
+        "full_text": txt_content.strip(),
+        "segments": idx,
+        "duration": duration,
+    }
+
+
 def process_video(video_path: Path, language: str, model: str, progress_q=None,
                   caption_style: str = "style1", orientation: str = "vertical",
                   highlight_color: str = "#FFE033", enable_zoom: bool = True,
                   caption_pos: int = 15, caption_font: str = "outfit",
-                  caption_anim: str = "default", reuse_captions: bool = False):
+                  caption_anim: str = "default", reuse_captions: bool = False,
+                  caption_case: str = "lower", caption_size: int = 100,
+                  caption_stroke: bool = False):
     name = video_path.stem
     _emit(progress_q, f">> Procesando: {video_path.name}")
 
@@ -1188,7 +1509,9 @@ def process_video(video_path: Path, language: str, model: str, progress_q=None,
                           style=caption_style, orientation=orientation,
                           highlight_color=highlight_color, enable_zoom=enable_zoom,
                           caption_pos=caption_pos, caption_font=caption_font,
-                          caption_anim=caption_anim)
+                          caption_anim=caption_anim,
+                          caption_case=caption_case, caption_size=caption_size,
+                          caption_stroke=caption_stroke)
         html_path = project_dir / "index.html"
         with open(html_path, "w", encoding="utf-8") as _hf:
             _hf.write(html)
@@ -1280,7 +1603,7 @@ def process_video(video_path: Path, language: str, model: str, progress_q=None,
 
     # 4. Generar grupos con estilos (ya con palabras clampadas)
     groups = transcript_to_groups(words, top_words, secondary_words,
-                                   max_words=8 if orientation == "horizontal" else 3)
+                                   max_words=5 if orientation == "horizontal" else 3)
     emphasis_count  = sum(1 for g in groups if g.get("emphasis"))
     underline_count = sum(1 for g in groups for w in g["words"] if w.get("style") == "style-underline")
     log.info(f"  {len(groups)} grupos ({emphasis_count} BIG, {underline_count} palabras con subrayado)")
@@ -1290,7 +1613,9 @@ def process_video(video_path: Path, language: str, model: str, progress_q=None,
     html = build_html(video_path.name, duration, groups, lang=language, style=caption_style,
                       orientation=orientation, highlight_color=highlight_color,
                       enable_zoom=enable_zoom, caption_pos=caption_pos,
-                      caption_font=caption_font, caption_anim=caption_anim)
+                      caption_font=caption_font, caption_anim=caption_anim,
+                      caption_case=caption_case, caption_size=caption_size,
+                      caption_stroke=caption_stroke)
     html_path = project_dir / "index.html"
     with open(html_path, "w", encoding="utf-8") as f:
         f.write(html)
@@ -2019,6 +2344,238 @@ def process_long_video(video_path: Path, language: str, model: str, progress_q=N
         _emit(progress_q, "ERROR:No se pudo procesar ningún clip")
 
     return output_clips
+
+
+# ── Audio Sync ───────────────────────────────────────────────────────────────────
+
+def _extract_mono_wav(src: Path, dst: Path, sample_rate: int = 8000) -> None:
+    """Extrae primera pista de audio a WAV mono a la sample_rate dada."""
+    subprocess.run([
+        FFMPEG_EXE, "-y", "-i", str(src),
+        "-vn", "-ac", "1", "-ar", str(sample_rate),
+        "-f", "wav", str(dst)
+    ], check=True, capture_output=True)
+
+
+def _read_wav_float(wav_path: Path) -> tuple:
+    """Lee WAV a numpy float32 array. Retorna (samples, sample_rate)."""
+    import wave as _wave
+    import numpy as np
+    with _wave.open(str(wav_path), "rb") as wf:
+        sr   = wf.getframerate()
+        nch  = wf.getnchannels()
+        sw   = wf.getsampwidth()
+        raw  = wf.readframes(wf.getnframes())
+    dtype = {1: np.int8, 2: np.int16, 4: np.int32}.get(sw, np.int16)
+    data  = np.frombuffer(raw, dtype=dtype).astype(np.float32)
+    if nch > 1:
+        data = data.reshape(-1, nch).mean(axis=1)
+    return data, sr
+
+
+def find_audio_offset(video_path: Path, audio_path: Path) -> tuple:
+    """
+    Calcula el desfase temporal entre el audio del video de cámara y el audio
+    de OBS mediante CONSENSO MULTI-VENTANA sobre el envelope RMS (10 ms/frame).
+
+    El problema del método anterior:
+      - Una sola cross-correlación global puede engancharse a un PICO ESPURIO.
+        El habla es auto-similar (el ritmo de una frase se parece al de otra), así
+        que un máximo falso a N segundos del verdadero puede ganar globalmente.
+        → Resultado: desfase incorrecto de varios segundos.
+
+    La solución (consenso por votación):
+      - Se toman muchas ventanas-ancla independientes del audio de la CÁMARA y
+        cada una se busca por separado dentro del audio de OBS.
+      - Un pico espurio es una coincidencia que NO se repite en el mismo offset
+        entre ventanas distintas; el offset VERDADERO sí es consistente en todas.
+      - Se toma la MEDIANA de los offsets → descarta automáticamente los outliers.
+      - La confianza = fracción de ventanas que están de acuerdo con la mediana.
+
+    Robustez adicional:
+      - High-pass >120 Hz: elimina hum de red y ruido grave de sala.
+      - Envelope de energía: sólo mide CUÁNDO suena, idéntico entre micros distintos.
+      - Cross-correlación normalizada (NCC): inmune a diferencias de volumen.
+      - Ventana de búsqueda ±MAX_OFFSET_S: descarta picos imposiblemente lejanos.
+
+    Retorna (offset_seconds: float, confidence: float 0-1).
+      offset > 0 → OBS empieza DESPUÉS que el video → hay que retrasarlo
+      offset < 0 → OBS empieza ANTES que el video → hay que recortarlo
+    """
+    import tempfile, numpy as np
+
+    SR           = 8000   # Hz — suficiente para el envelope
+    FRAME_MS     = 10     # ms por frame → resolución ±5 ms (imperceptible)
+    MAX_OFFSET_S = 30     # buscar desfase sólo dentro de ±30 s
+    WIN_S        = 8      # duración de cada ventana-ancla
+    N_ANCHORS    = 13     # nº de ventanas-ancla repartidas por el audio
+    CAP_S        = 300    # considerar hasta 5 min de material
+
+    frame_size = max(1, SR * FRAME_MS // 1000)   # 80 muestras a 8 kHz
+    ENV_SR     = 1000 // FRAME_MS                # 100 frames/s
+
+    # ── 1. Extraer audio mono ──
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        v_wav = tmp / "cam.wav"
+        a_wav = tmp / "obs.wav"
+        _extract_mono_wav(video_path, v_wav, SR)
+        _extract_mono_wav(audio_path, a_wav, SR)
+        v_raw, _ = _read_wav_float(v_wav)
+        a_raw, _ = _read_wav_float(a_wav)
+
+    # ── 2. High-pass >120 Hz (quita hum/ruido grave) ──
+    def _hp(sig, cutoff_hz=120):
+        n = len(sig)
+        if n == 0:
+            return sig
+        f     = np.fft.rfft(sig)
+        freqs = np.fft.rfftfreq(n, 1.0 / SR)
+        f[freqs < cutoff_hz] = 0.0
+        return np.fft.irfft(f, n=n)
+
+    # ── 3. Envelope RMS por frame ──
+    def _envelope(sig):
+        nf = len(sig) // frame_size
+        if nf == 0:
+            return np.zeros(1, dtype=np.float32)
+        b = sig[:nf * frame_size].reshape(nf, frame_size)
+        return np.sqrt(np.mean(b * b, axis=1)).astype(np.float32)
+
+    v_env = _envelope(_hp(v_raw))
+    a_env = _envelope(_hp(a_raw))
+
+    cap_f = CAP_S * ENV_SR
+    v_env = v_env[:cap_f]
+    a_env = a_env[:cap_f]
+
+    # Restar la media → cross-correlación centrada (ignora el nivel DC)
+    v_env = v_env - float(v_env.mean())
+    a_env = a_env - float(a_env.mean())
+
+    win_f   = WIN_S * ENV_SR
+    max_lag = MAX_OFFSET_S * ENV_SR
+
+    # ── NCC deslizante: posición del template dentro de signal ──
+    def _ncc(template, signal):
+        L, M = len(template), len(signal)
+        if M < L:
+            return None, None
+        nfft = 1 << (M + L - 1).bit_length()
+        T    = np.fft.rfft(template[::-1], n=nfft)
+        S    = np.fft.rfft(signal,        n=nfft)
+        full = np.fft.irfft(S * T, n=nfft)
+        num  = full[L - 1:M]                              # length M-L+1
+        t_norm = float(np.sqrt(np.sum(template * template))) + 1e-9
+        csq    = np.concatenate([[0.0], np.cumsum(signal * signal)])
+        win_e  = csq[L:M + 1] - csq[0:M - L + 1]
+        s_norm = np.sqrt(np.maximum(win_e, 0.0)) + 1e-9
+        ncc    = num / (t_norm * s_norm)
+        idx    = int(np.argmax(ncc))
+        return idx, float(ncc[idx])
+
+    # ── 4. Consenso multi-ventana ──
+    offsets, strengths = [], []
+    usable = len(v_env) - win_f
+    if usable > win_f:   # hay material suficiente para varias ventanas
+        starts = np.linspace(0, usable, N_ANCHORS).astype(int)
+        for s in starts:
+            cam = v_env[s:s + win_f]
+            if float(cam.std()) < 1e-3:   # ventana prácticamente en silencio
+                continue
+            lo  = max(0, s - max_lag)
+            hi  = min(len(a_env), s + win_f + max_lag)
+            reg = a_env[lo:hi]
+            idx, peak = _ncc(cam, reg)
+            if idx is None:
+                continue
+            obs_pos = lo + idx                 # posición del ancla dentro de OBS
+            offsets.append((s - obs_pos) / ENV_SR)
+            strengths.append(peak)
+
+    if len(offsets) >= 3:
+        offs = np.array(offsets, dtype=np.float64)
+        strn = np.array(strengths, dtype=np.float64)
+        med  = float(np.median(offs))
+        inl  = np.abs(offs - med) <= 0.05      # de acuerdo ±50 ms
+        if inl.sum() == 0:
+            inl = np.abs(offs - med) <= 0.10
+        final     = float(np.mean(offs[inl]))
+        agree     = float(inl.sum()) / len(offs)
+        mean_peak = float(np.mean(strn[inl])) if inl.sum() else 0.0
+        # confianza = acuerdo entre ventanas, escalado por la fuerza media del match
+        confidence = round(min(1.0, agree * (0.4 + 0.6 * mean_peak)), 3)
+        try:
+            print(f"  [sync] offsets={[round(o,3) for o in offsets]} "
+                  f"→ median={med:.3f} final={final:.3f} agree={agree:.2f}")
+        except Exception:
+            pass
+        return round(final, 3), confidence
+
+    # ── 5. Fallback: correlación global (audio demasiado corto) ──
+    n     = len(v_env) + len(a_env) - 1
+    n_fft = 1 << (n - 1).bit_length()
+    V     = np.fft.rfft(v_env, n=n_fft)
+    A     = np.fft.rfft(a_env, n=n_fft)
+    corr  = np.fft.irfft(V * np.conj(A), n=n_fft)[:n]
+    corr_full = np.concatenate([corr[-(len(a_env) - 1):], corr[:len(v_env)]])
+
+    center = len(a_env) - 1
+    lo = max(0, center - max_lag)
+    hi = min(len(corr_full), center + max_lag + 1)
+    search = np.full_like(corr_full, -1e30)
+    search[lo:hi] = corr_full[lo:hi]
+    peak_idx = int(np.argmax(search))
+    offset   = round((peak_idx - center) / ENV_SR, 3)
+
+    window_vals = corr_full[lo:hi]
+    peak_val    = float(corr_full[peak_idx])
+    mean_abs    = float(np.mean(np.abs(window_vals)))
+    std_abs     = float(np.std(np.abs(window_vals))) + 1e-8
+    confidence  = min(1.0, max(0.0, round((peak_val - mean_abs) / (std_abs * 3 + 1e-8), 3)))
+    return offset, confidence
+
+
+def sync_audio_tracks(video_path: Path, obs_path: Path, output_path: Path,
+                      progress_q=None) -> float:
+    """
+    Sincroniza el audio de OBS con el video de cámara y los combina.
+    Retorna el offset detectado (en segundos).
+    """
+    _emit(progress_q, "SYNC_STEP:1:Analizando audio...")
+
+    offset, confidence = find_audio_offset(video_path, obs_path)
+
+    _emit(progress_q, f"SYNC_OFFSET:{offset:.3f}:{confidence:.3f}")
+    _emit(progress_q, "SYNC_STEP:2:Aplicando sincronización...")
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Construir comando ffmpeg según el signo del offset
+    if offset >= 0:
+        # OBS empezó después → retrasamos el audio OBS
+        audio_input = ["-itsoffset", f"{offset:.3f}", "-i", str(obs_path)]
+    else:
+        # OBS empezó antes → recortamos el principio del audio OBS
+        audio_input = ["-ss", f"{-offset:.3f}", "-i", str(obs_path)]
+
+    cmd = [
+        FFMPEG_EXE, "-y",
+        "-i", str(video_path),
+        *audio_input,
+        "-map", "0:v:0",
+        "-map", "1:a:0",
+        "-c:v", "copy",
+        "-c:a", "aac", "-b:a", "192k",
+        str(output_path)
+    ]
+
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"ffmpeg sync error: {result.stderr[-600:]}")
+
+    _emit(progress_q, "SYNC_STEP:3:Listo")
+    return offset
 
 
 # ── Watchdog ─────────────────────────────────────────────────────────────────────

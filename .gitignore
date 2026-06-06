@@ -10,6 +10,11 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
+# Copia suelta del backend compilado (el real vive en dist/, ya ignorado)
+/server.exe
+# Script de verificación temporal (rutas locales hardcodeadas)
+_verify_fix.py
+
 # Herramientas bundleadas (pesadas, no van al repo)
 resources/tools/
 

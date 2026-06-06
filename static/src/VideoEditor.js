@@ -28,11 +28,13 @@ function VideoEditor({ jobId, onReset, onApplyChanges }) {
   const [draggingCapPos, setDraggingCapPos] = useStateVE(false);
   const [applying,       setApplying]       = useStateVE(false);
   // Style metadata loaded from job-info (needed to render accurate caption overlay)
-  const [capStyle,      setCapStyle]      = useStateVE("style1");
-  const [hlColor,       setHlColor]       = useStateVE("#FFE033");
-  const [capFont,       setCapFont]       = useStateVE("outfit");
-  const [capOrient,     setCapOrient]     = useStateVE("vertical");
-  const [vidScale,      setVidScale]      = useStateVE(0.21); // clientHeight / original_height
+  const [capStyle,          setCapStyle]          = useStateVE("style1");
+  const [hlColor,           setHlColor]           = useStateVE("#FFE033");
+  const [capFont,           setCapFont]           = useStateVE("outfit");
+  const [capOrient,         setCapOrient]         = useStateVE("vertical");
+  const [vidScale,          setVidScale]          = useStateVE(0.21); // clientHeight / original_height
+  const [originalCaptions,  setOriginalCaptions]  = useStateVE([]);
+  const [originalCapPos,    setOriginalCapPos]     = useStateVE(15);
 
   const vidRef               = useRefVE(null);
   const rafRef               = useRefVE(null);
@@ -48,12 +50,16 @@ function VideoEditor({ jobId, onReset, onApplyChanges }) {
       .then(d => {
         if (!d) return;
         if (d.duration) { setDuration(d.duration); setTrimEnd(d.duration); }
-        if (typeof d.caption_pos    === "number") setCaptionPosEdit(d.caption_pos);
+        if (typeof d.caption_pos    === "number") { setCaptionPosEdit(d.caption_pos); setOriginalCapPos(d.caption_pos); }
         if (d.caption_style)  setCapStyle(d.caption_style);
         if (d.highlight_color) setHlColor(d.highlight_color);
         if (d.caption_font)   setCapFont(d.caption_font);
         if (d.orientation)    setCapOrient(d.orientation);
-        if (Array.isArray(d.captions)) setCaptions(d.captions.map(c => ({ ...c })));
+        if (Array.isArray(d.captions)) {
+          const loaded = d.captions.map(c => ({ ...c }));
+          setCaptions(loaded);
+          setOriginalCaptions(loaded.map(c => ({ ...c })));
+        }
       })
       .catch(() => {});
   }, [open, jobId]);
@@ -350,9 +356,20 @@ function VideoEditor({ jobId, onReset, onApplyChanges }) {
     };
     if (capStyle === "style_doc") return {
       css: { display:"inline-block", fontFamily:"'Raleway', sans-serif", fontWeight:300,
-             fontSize:58*sc+"px", color:"#fff", letterSpacing:2.5*sc+"px", lineHeight:1.4,
+             fontSize:26*sc+"px", color:"#fff", letterSpacing:2.5*sc+"px", lineHeight:1.4,
              textShadow:`${2*sc}px ${2*sc}px 0 rgba(0,0,0,0.98),${-2*sc}px ${-2*sc}px 0 rgba(0,0,0,0.98),${2*sc}px ${-2*sc}px 0 rgba(0,0,0,0.98),${-2*sc}px ${2*sc}px 0 rgba(0,0,0,0.98)` },
       text: raw,
+    };
+    if (capStyle === "style_sub") return {
+      css: { display:"inline-block", fontFamily:"'Inter', sans-serif", fontWeight:400,
+             fontSize:22*sc+"px", color:"#fff", letterSpacing:0.3*sc+"px", lineHeight:1.25 },
+      text: raw,
+    };
+    if (capStyle === "style_bold") return {
+      css: { display:"inline-block", fontFamily:"'Outfit', sans-serif", fontWeight:900,
+             fontSize:29*sc+"px", color:"#fff", letterSpacing:1.5*sc+"px", lineHeight:1.15, textTransform:"uppercase",
+             textShadow:`${-2*sc}px ${-2*sc}px 0 rgba(0,0,0,0.95),${2*sc}px ${2*sc}px 0 rgba(0,0,0,0.95)` },
+      text: raw.toUpperCase(),
     };
     if (capStyle === "style_retro") return {
       css: { display:"inline-block", fontFamily:"'Times New Roman', Times, serif",
@@ -430,18 +447,41 @@ function VideoEditor({ jobId, onReset, onApplyChanges }) {
                 }}>● CAMBIOS SIN GUARDAR</span>
               )}
             </div>
-            <button
-              onClick={() => setOpen(false)}
-              style={{
-                background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.10)",
-                borderRadius: "0.5rem", color: "rgba(255,255,255,0.55)",
-                fontSize: 18, width: 32, height: 32,
-                cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
-                transition: "all 0.15s",
-              }}
-              onMouseEnter={e => { e.currentTarget.style.background = "rgba(255,60,60,0.18)"; e.currentTarget.style.color = "#ff6060"; }}
-              onMouseLeave={e => { e.currentTarget.style.background = "rgba(255,255,255,0.06)"; e.currentTarget.style.color = "rgba(255,255,255,0.55)"; }}
-            >×</button>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              {/* Undo/discard all changes */}
+              <button
+                onClick={() => {
+                  setCaptions(originalCaptions.map(c => ({ ...c })));
+                  setCaptionPosEdit(originalCapPos);
+                  setHasChanges(false);
+                  setEditingId(null);
+                  setOpen(false);
+                }}
+                title="Descartar todos los cambios y cerrar"
+                style={{
+                  background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)",
+                  borderRadius: "0.5rem", color: "rgba(255,255,255,0.45)",
+                  fontSize: 11, height: 32, padding: "0 10px",
+                  cursor: "pointer", display: "flex", alignItems: "center", gap: 5,
+                  fontFamily: "'Outfit',sans-serif", fontWeight: 600, letterSpacing: ".04em",
+                  transition: "all 0.15s",
+                }}
+                onMouseEnter={e => { e.currentTarget.style.background = "rgba(255,180,60,0.12)"; e.currentTarget.style.color = "rgba(255,200,80,0.90)"; e.currentTarget.style.borderColor = "rgba(255,180,60,0.30)"; }}
+                onMouseLeave={e => { e.currentTarget.style.background = "rgba(255,255,255,0.04)"; e.currentTarget.style.color = "rgba(255,255,255,0.45)"; e.currentTarget.style.borderColor = "rgba(255,255,255,0.08)"; }}
+              >↩ Descartar</button>
+              <button
+                onClick={() => setOpen(false)}
+                style={{
+                  background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.10)",
+                  borderRadius: "0.5rem", color: "rgba(255,255,255,0.55)",
+                  fontSize: 18, width: 32, height: 32,
+                  cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+                  transition: "all 0.15s",
+                }}
+                onMouseEnter={e => { e.currentTarget.style.background = "rgba(255,60,60,0.18)"; e.currentTarget.style.color = "#ff6060"; }}
+                onMouseLeave={e => { e.currentTarget.style.background = "rgba(255,255,255,0.06)"; e.currentTarget.style.color = "rgba(255,255,255,0.55)"; }}
+              >×</button>
+            </div>
           </div>
 
           {/* Body */}
@@ -449,7 +489,7 @@ function VideoEditor({ jobId, onReset, onApplyChanges }) {
 
             {/* ── Left: video preview + playback controls ── */}
             <div style={{
-              flex: "0 0 auto", width: "min(500px, 50%)",
+              flex: "0 0 auto", width: "min(680px, 62%)",
               display: "flex", flexDirection: "column",
               padding: "14px 14px 10px",
               borderRight: "1px solid rgba(255,255,255,0.06)",
@@ -480,7 +520,7 @@ function VideoEditor({ jobId, onReset, onApplyChanges }) {
                   onPlay={() => setPlaying(true)}
                   onPause={() => setPlaying(false)}
                   onEnded={() => setPlaying(false)}
-                  style={{ display: "block", width: "100%", height: "auto", maxHeight: "55vh" }}
+                  style={{ display: "block", width: "100%", height: "auto", maxHeight: "68vh" }}
                 />
 
                 {/* Caption drag zone — 16px transparent hit area, above caption overlay so always clickable */}
@@ -589,19 +629,22 @@ function VideoEditor({ jobId, onReset, onApplyChanges }) {
                   }
 
                   // Non-emphasis: horizontal row
+                  const isSubStyle = capStyle === "style_sub";
                   return (
                     <div style={{
                       position: "absolute",
                       bottom: `${captionPosEdit}%`,
                       left: 0, right: 0,
                       display: "flex", justifyContent: "center",
-                      padding: `0 ${Math.round(60 * sc)}px`,
+                      padding: isSubStyle ? `${Math.round(14*sc)}px ${Math.round(60*sc)}px` : `0 ${Math.round(60 * sc)}px`,
+                      background: isSubStyle ? "rgba(0,0,0,0.72)" : "transparent",
                       pointerEvents: "none",
                       zIndex: 6,
                     }}>
                       <div style={{
                         display: "flex", flexDirection: "row", alignItems: "center",
-                        flexWrap: "wrap", gap: `0 ${Math.round(16 * sc)}px`, justifyContent: "center",
+                        flexWrap: "nowrap", gap: `0 ${Math.round(16 * sc)}px`, justifyContent: "center",
+                        overflow: "hidden",
                       }}>
                         {words.map((w, wi) => {
                           const { css, text } = wordProps(w, wi, activeCap);

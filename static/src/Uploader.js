@@ -139,7 +139,7 @@ function ColorPicker({ value, onChange }) {
 // ── Subtítulos: pasos ──
 const SUB_STEPS   = ["Video recibido","Transcribiendo audio","Analizando palabras clave","Generando captions","Renderizando video"];
 const SUB_STEP_MAP= {"STEP:1":0,"STEP:2":1,"STEP:3":2,"STEP:4":3,"STEP:5":4};
-const SUB_BAR_MAP = {0:10,1:32,2:58,3:78,4:92};
+const SUB_BAR_MAP = {0:5, 1:10, 2:44, 3:47, 4:50};
 const CLIP_STEPS  = ["Video recibido","Transcribiendo video completo","Detectando mejores momentos","Clips detectados","Editando clips"];
 
 function PulseDot() {
@@ -409,9 +409,10 @@ function DropZone({ onFiles, dragOver, setDragOver, inputRef, hint, inputId }) {
   const onDragOver = (e)=>{ e.preventDefault(); setDragOver(true); };
   const onDragLeave= (e)=>{ e.preventDefault(); setDragOver(false); };
   const onChange   = (e)=>{ if(e.target.files.length) onFiles(e.target.files); };
+  const openPicker = ()=>{ inputRef?.current?.click(); };
   return (
-    <label
-      htmlFor={id}
+    <div
+      onClick={openPicker}
       onDrop={onDrop} onDragOver={onDragOver} onDragLeave={onDragLeave}
       style={{
         display:"block", cursor:"pointer", textAlign:"center",
@@ -441,8 +442,9 @@ function DropZone({ onFiles, dragOver, setDragOver, inputRef, hint, inputId }) {
           {hint} &nbsp;·&nbsp; <span style={{color:"#5E6AD2"}}>MP4 · MOV · MKV</span>
         </div>
       </div>
-      <input ref={inputRef} id={id} type="file" accept="video/mp4,video/quicktime,video/x-matroska,.mp4,.mov,.mkv" onChange={onChange} style={{position:"absolute",inset:0,opacity:0,cursor:"pointer",width:"100%",height:"100%"}} />
-    </label>
+      {/* Input oculto sin pointer-events para que no intercepte clicks fuera de la zona */}
+      <input ref={inputRef} id={id} type="file" accept="video/mp4,video/quicktime,video/x-matroska,.mp4,.mov,.mkv" onChange={onChange} style={{display:"none"}} />
+    </div>
   );
 }
 
@@ -667,8 +669,10 @@ function VideoPreview({ jobId, orientation }) {
 }
 
 // ── Preview de estilo 1: BIG + small ──
-function StylePreview1({ color = "#FFE033" }) {
+function StylePreview1({ color = "#FFE033", font = "outfit" }) {
   const c = HIGHLIGHT_COLORS.find(x => x.id === color) || HIGHLIGHT_COLORS[0];
+  const _ffMap = { outfit:"'Outfit',sans-serif", inter:"'Inter',sans-serif", raleway:"'Raleway',sans-serif", playfair:"'Playfair Display',serif" };
+  const ff = _ffMap[font] || _ffMap.outfit;
   return (
     <div style={{
       background:"#0a0a0a", borderRadius:"0.85rem",
@@ -679,19 +683,19 @@ function StylePreview1({ color = "#FFE033" }) {
       <div style={{position:"absolute",inset:0,background:"linear-gradient(to bottom, #111 0%, #0a0a0a 100%)"}} />
       <div style={{position:"relative",display:"flex",flexDirection:"column",alignItems:"center",gap:0}}>
         <span style={{
-          fontFamily:"'Outfit',sans-serif", fontWeight:300, fontStyle:"italic",
+          fontFamily:ff, fontWeight:300, fontStyle:"italic",
           fontSize:13, color:"rgba(255,255,255,0.88)", letterSpacing:0.3,
           textShadow:"0 1px 4px rgba(0,0,0,0.9)",
         }}>esto es</span>
         <span style={{
-          fontFamily:"'Outfit',sans-serif", fontWeight:900,
+          fontFamily:ff, fontWeight:900,
           fontSize:32, color:c.id, letterSpacing:-1.5,
           textTransform:"uppercase", lineHeight:1.0,
           textShadow:`0 0 18px ${c.glow}, 0 0 36px ${c.glow}, 0 2px 6px rgba(0,0,0,0.99)`,
           transition:"color 0.25s, text-shadow 0.25s",
         }}>VIRAL</span>
         <span style={{
-          fontFamily:"'Outfit',sans-serif", fontWeight:300, fontStyle:"italic",
+          fontFamily:ff, fontWeight:300, fontStyle:"italic",
           fontSize:13, color:"rgba(255,255,255,0.88)", letterSpacing:0.3,
           textShadow:"0 1px 4px rgba(0,0,0,0.9)",
         }}>de verdad</span>
@@ -701,8 +705,10 @@ function StylePreview1({ color = "#FFE033" }) {
 }
 
 // ── Preview de estilo 2: italic + glow de color ──
-function StylePreview2({ color = "#FFE033" }) {
+function StylePreview2({ color = "#FFE033", font = "outfit" }) {
   const c = HIGHLIGHT_COLORS.find(x => x.id === color) || HIGHLIGHT_COLORS[0];
+  const _ffMap = { outfit:"'Outfit',sans-serif", inter:"'Inter',sans-serif", raleway:"'Raleway',sans-serif", playfair:"'Playfair Display',serif" };
+  const ff = _ffMap[font] || _ffMap.outfit;
   return (
     <div style={{
       background:"#0a0a0a", borderRadius:"0.85rem",
@@ -713,18 +719,18 @@ function StylePreview2({ color = "#FFE033" }) {
       <div style={{position:"absolute",inset:0,background:"linear-gradient(to bottom, #111 0%, #0a0a0a 100%)"}} />
       <div style={{position:"relative",display:"flex",flexDirection:"row",alignItems:"center",gap:6,flexWrap:"wrap",justifyContent:"center",padding:"0 10px"}}>
         <span style={{
-          fontFamily:"'Outfit',sans-serif", fontWeight:400, fontStyle:"italic",
+          fontFamily:ff, fontWeight:400, fontStyle:"italic",
           fontSize:15, color:"rgba(255,255,255,0.94)",
           textShadow:"0 1px 6px rgba(0,0,0,0.85)",
         }}>esto es</span>
         <span style={{
-          fontFamily:"'Outfit',sans-serif", fontWeight:400, fontStyle:"italic",
+          fontFamily:ff, fontWeight:400, fontStyle:"italic",
           fontSize:15, color:c.id,
           textShadow:`0 0 5px ${c.id}, 0 0 14px ${c.glow}, 0 0 30px ${c.glow}, 0 0 50px ${c.glow}`,
           transition:"color 0.25s, text-shadow 0.25s",
         }}>increíble</span>
         <span style={{
-          fontFamily:"'Outfit',sans-serif", fontWeight:400, fontStyle:"italic",
+          fontFamily:ff, fontWeight:400, fontStyle:"italic",
           fontSize:15, color:"rgba(255,255,255,0.94)",
           textShadow:"0 1px 6px rgba(0,0,0,0.85)",
         }}>de verdad</span>
@@ -733,22 +739,25 @@ function StylePreview2({ color = "#FFE033" }) {
   );
 }
 
-// ── Preview estilo Documental ──
-function StylePreviewDoc() {
+// ── Preview estilo Documental (horizontal) ──
+function StylePreviewDoc({ font="raleway", color="#ffffff" }) {
+  const _ffMap = { outfit:"'Outfit',sans-serif", inter:"'Inter',sans-serif", raleway:"'Raleway',sans-serif", playfair:"'Playfair Display',serif" };
+  const ff = _ffMap[font] || _ffMap.raleway;
   return (
     <div style={{
       background:"#0a0a0a", borderRadius:"0.85rem",
-      height:130, display:"flex", flexDirection:"column",
-      alignItems:"center", justifyContent:"flex-end",
-      paddingBottom:26, overflow:"hidden", position:"relative",
+      height:300, display:"flex", flexDirection:"column",
+      alignItems:"center", justifyContent:"center",
+      overflow:"hidden", position:"relative",
     }}>
-      <div style={{position:"absolute",inset:0,background:"linear-gradient(to bottom, #111 0%, #0a0a0a 100%)"}} />
-      <div style={{position:"relative",display:"flex",flexDirection:"row",alignItems:"center",gap:6,flexWrap:"wrap",justifyContent:"center",padding:"0 14px"}}>
-        {["así","hablan","los","documentales"].map((w,i)=>(
+      <div style={{position:"absolute",inset:0,background:"linear-gradient(to bottom,#1a1a2e 0%,#0a0a0a 60%)"}} />
+      <div style={{position:"relative",display:"flex",flexDirection:"column",alignItems:"center",gap:4,justifyContent:"center",padding:"0 12px",textAlign:"center"}}>
+        {["así hablan","los documentales"].map((w,i)=>(
           <span key={i} style={{
-            fontFamily:"'Raleway', sans-serif", fontWeight:300,
-            fontSize:13.5, color:"#ffffff", letterSpacing:"1.8px",
+            fontFamily:ff, fontWeight:300,
+            fontSize:13, color:color, letterSpacing:"2px",
             textShadow:"1px 1px 0 #000,-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000",
+            whiteSpace:"nowrap",
           }}>{w}</span>
         ))}
       </div>
@@ -756,41 +765,85 @@ function StylePreviewDoc() {
   );
 }
 
-// ── Preview estilo Retro Classic (fansub anime 90s/2000s) ──
-function StylePreviewRetro() {
-  const blueOutline = [
-    "-2px -2px 0 #1E2D73","2px -2px 0 #1E2D73","-2px 2px 0 #1E2D73","2px 2px 0 #1E2D73",
-    "-2px 0 0 #1E2D73","2px 0 0 #1E2D73","0 -2px 0 #1E2D73","0 2px 0 #1E2D73",
-    "-3px -3px 1px #0F1638","3px -3px 1px #0F1638","-3px 3px 1px #0F1638","3px 3px 1px #0F1638",
-    "0 0 6px rgba(255,210,26,0.20)",
-  ].join(",");
+// ── Preview estilo Cinematic (amarillo sobre barra negra) ──
+function StylePreviewCinematic() {
   return (
     <div style={{
       background:"#0a0a0a", borderRadius:"0.85rem",
-      height:130, display:"flex", flexDirection:"column",
-      alignItems:"center", justifyContent:"flex-end",
-      paddingBottom:24, overflow:"hidden", position:"relative",
+      height:200, display:"flex", flexDirection:"column",
+      alignItems:"stretch", justifyContent:"flex-end",
+      overflow:"hidden", position:"relative",
     }}>
-      <div style={{position:"absolute",inset:0,background:"linear-gradient(to bottom, #111 0%, #0a0a0a 100%)"}} />
+      <div style={{position:"absolute",inset:0,background:"linear-gradient(to bottom,#1a1208 0%,#0a0a0a 60%)"}} />
       <div style={{
         position:"relative",
-        fontFamily:"'Times New Roman',Times,serif",
-        fontStyle:"italic", fontWeight:"bold",
-        fontSize:16,
-        letterSpacing:"-0.5px",
-        lineHeight:1.2,
-        transform:"scaleX(1.05) scaleY(0.94)",
-        display:"inline-block",
-        background:"linear-gradient(to bottom, #FFE46B 0%, #FFD21A 48%, #E6B800 100%)",
-        WebkitBackgroundClip:"text",
-        WebkitTextFillColor:"transparent",
-        backgroundClip:"text",
-        textShadow: blueOutline,
-        filter:"drop-shadow(1px 2px 3px rgba(0,0,0,0.45))",
-        textAlign:"center",
-        padding:"0 10px",
+        background:"rgba(0,0,0,0.92)",
+        padding:"10px 0",
+        display:"flex", alignItems:"center", justifyContent:"center",
+        gap:6,
       }}>
-        esto es increíble de verdad
+        {["whatever","comes","next"].map((w,i)=>(
+          <span key={i} style={{
+            fontFamily:"'Inter',sans-serif", fontWeight:400,
+            fontSize:14, color:"#F5C518", letterSpacing:"0.8px",
+          }}>{w}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Preview estilo Netflix Sub (blanco sobre barra oscura) ──
+function StylePreviewSub({ font="inter", color="#ffffff" }) {
+  const _ffMap = { outfit:"'Outfit',sans-serif", inter:"'Inter',sans-serif", raleway:"'Raleway',sans-serif", playfair:"'Playfair Display',serif" };
+  const ff = _ffMap[font] || _ffMap.inter;
+  return (
+    <div style={{
+      background:"#0a0a0a", borderRadius:"0.85rem",
+      height:300, display:"flex", flexDirection:"column",
+      alignItems:"stretch", justifyContent:"center",
+      overflow:"hidden", position:"relative",
+    }}>
+      <div style={{position:"absolute",inset:0,background:"linear-gradient(to bottom,#0d1117 0%,#0a0a0a 60%)"}} />
+      <div style={{
+        position:"relative",
+        background:"rgba(0,0,0,0.72)",
+        padding:"12px 0",
+        display:"flex", alignItems:"center", justifyContent:"center",
+        gap:5, flexWrap:"wrap",
+      }}>
+        {["El Estado Mayor","de la OTAN"].map((w,i)=>(
+          <span key={i} style={{
+            fontFamily:ff, fontWeight:400,
+            fontSize:12.5, color:color, letterSpacing:"0.3px",
+            whiteSpace:"nowrap",
+          }}>{w}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Preview estilo Bold (blanco bold sin barra) ──
+function StylePreviewBold({ font="outfit", color="#ffffff" }) {
+  const _ffMap = { outfit:"'Outfit',sans-serif", inter:"'Inter',sans-serif", raleway:"'Raleway',sans-serif", playfair:"'Playfair Display',serif" };
+  const ff = _ffMap[font] || _ffMap.outfit;
+  return (
+    <div style={{
+      background:"#0a0a0a", borderRadius:"0.85rem",
+      height:300, display:"flex", flexDirection:"column",
+      alignItems:"center", justifyContent:"center",
+      overflow:"hidden", position:"relative",
+    }}>
+      <div style={{position:"absolute",inset:0,background:"linear-gradient(to bottom,#111 0%,#0a0a0a 60%)"}} />
+      <div style={{position:"relative",display:"flex",flexDirection:"row",alignItems:"center",gap:5,justifyContent:"center",padding:"0 14px"}}>
+        {["BOLD","STYLE"].map((w,i)=>(
+          <span key={i} style={{
+            fontFamily:ff, fontWeight:900,
+            fontSize:22, color:color, letterSpacing:"2px",
+            textShadow:"-2px -2px 0 #000,2px -2px 0 #000,-2px 2px 0 #000,2px 2px 0 #000,0 3px 10px rgba(0,0,0,0.99)",
+          }}>{w}</span>
+        ))}
       </div>
     </div>
   );
@@ -1158,7 +1211,7 @@ function StylePicker({ onSelect, onBack, videoURL }) {
           {/* Big Glow */}
           <div style={cardStyle("style1")} onClick={()=>setSelected("style1")}>
             <div style={{position:"absolute",top:0,left:0,right:0,height:1,background:"linear-gradient(90deg,transparent,rgba(255,255,255,0.10),transparent)",pointerEvents:"none"}} />
-            <StylePreview1 color={selectedColor} />
+            <StylePreview1 color={selectedColor} font={captFont} />
             <div style={labelStyle("style1")}>
               <div>
                 <div style={{fontSize:"0.82rem",fontWeight:600,color:"rgba(255,255,255,0.85)",fontFamily:"'Inter',sans-serif"}}>Big Glow</div>
@@ -1173,7 +1226,7 @@ function StylePicker({ onSelect, onBack, videoURL }) {
           {/* Normal Glow */}
           <div style={cardStyle("style2")} onClick={()=>setSelected("style2")}>
             <div style={{position:"absolute",top:0,left:0,right:0,height:1,background:"linear-gradient(90deg,transparent,rgba(255,255,255,0.10),transparent)",pointerEvents:"none"}} />
-            <StylePreview2 color={selectedColor} />
+            <StylePreview2 color={selectedColor} font={captFont} />
             <div style={labelStyle("style2")}>
               <div>
                 <div style={{fontSize:"0.82rem",fontWeight:600,color:"rgba(255,255,255,0.85)",fontFamily:"'Inter',sans-serif"}}>Normal Glow</div>
@@ -1319,83 +1372,325 @@ const SFX_OPTIONS = [
   { id:"cinematic",  label:"Cinemático",  icon:"♬" },
 ];
 
-// ── Selector de estilo — horizontal (Documental Style / Fancy Creative) ──
-function StylePickerHorizontal({ onSelect, onBack }) {
-  const [selected, setSelected] = useStateU(null);
-  const [sfxPack,  setSfxPack]  = useStateU("none");
+// ── Selector de estilo — horizontal (4 estilos + mockup widescreen) ──
+function StylePickerHorizontal({ onSelect, onBack, videoURL }) {
+  const [selected,    setSelected]    = useStateU(null);
+  const [sfxPack,     setSfxPack]     = useStateU("none");
+  const [captFont,    setCaptFont]    = useStateU("outfit");
+  const [captCase,    setCaptCase]    = useStateU("lower");
+  const [captSize,    setCaptSize]    = useStateU(100);
+  const [captColor,   setCaptColor]   = useStateU("#FFFFFF");
+  const [captStroke,  setCaptStroke]  = useStateU(false);
+  const [subPos,    setSubPos]    = useStateU(7);
+  const [dragging,  setDragging]  = useStateU(false);
+  const [hovering,  setHovering]  = useStateU(false);
+  const mockupRef = useRefU(null);
 
-  const cardStyle = (id, disabled) => ({
-    flex:1, borderRadius:"1.1rem", overflow:"hidden",
-    cursor: disabled ? "not-allowed" : "pointer",
+  // Drag pos on widescreen mockup
+  const { useEffect: useEffSPH2 } = React;
+  useEffSPH2(()=>{
+    if (!dragging) return;
+    const MOCK_H = 259;
+    const move = (e) => {
+      if (!mockupRef.current) return;
+      const rect = mockupRef.current.getBoundingClientRect();
+      const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+      const y = clientY - rect.top;
+      const pct = Math.round((1 - y / rect.height) * 100);
+      setSubPos(Math.max(2, Math.min(50, pct)));
+    };
+    const up = () => setDragging(false);
+    document.addEventListener("mousemove", move);
+    document.addEventListener("mouseup", up);
+    document.addEventListener("touchmove", move, { passive: true });
+    document.addEventListener("touchend", up);
+    return () => {
+      document.removeEventListener("mousemove", move);
+      document.removeEventListener("mouseup", up);
+      document.removeEventListener("touchmove", move);
+      document.removeEventListener("touchend", up);
+    };
+  }, [dragging]);
+
+  const STYLES = [
+    { id:"style_doc",  Preview: StylePreviewDoc,  label:"Documental",  sub:"Raleway · Elegante" },
+    { id:"style_sub",  Preview: StylePreviewSub,  label:"Netflix Sub", sub:"Limpio · Minimalista" },
+    { id:"style_bold", Preview: StylePreviewBold, label:"Bold",        sub:"Outfit · Contundente" },
+  ];
+
+  const cardSt = (id) => ({
+    flex:1, borderRadius:"1.1rem", overflow:"hidden", cursor:"pointer", position:"relative",
     border: selected===id ? "1.5px solid rgba(94,106,210,0.55)" : "1px solid rgba(255,255,255,0.07)",
     background: selected===id ? "rgba(94,106,210,0.05)" : "rgba(255,255,255,0.02)",
-    boxShadow: selected===id
-      ? "0 0 0 1px rgba(94,106,210,0.20), 0 0 28px rgba(94,106,210,0.12)"
-      : "0 0 0 1px rgba(255,255,255,0.04), 0 2px 16px rgba(0,0,0,0.35)",
+    boxShadow: selected===id ? "0 0 0 1px rgba(94,106,210,0.20),0 0 28px rgba(94,106,210,0.12)" : "0 0 0 1px rgba(255,255,255,0.04),0 2px 16px rgba(0,0,0,0.35)",
     transition:"all 0.2s",
-    position:"relative",
-    opacity: disabled ? 0.45 : 1,
   });
 
-  return (
-    <div>
-      {sectionLabel("Elige el estilo de captions")}
-      <div style={{display:"flex",gap:10,marginBottom:16}}>
+  const FONT_OPTS = [
+    { id:"outfit",   label:"Outfit" },
+    { id:"inter",    label:"Inter" },
+    { id:"raleway",  label:"Raleway" },
+    { id:"playfair", label:"Playfair" },
+  ];
+  const SIZE_OPTS = [
+    { id:80,  label:"S" },
+    { id:90,  label:"M" },
+    { id:100, label:"L" },
+    { id:115, label:"XL" },
+  ];
+  const CASE_OPTS = [
+    { id:"upper",  label:"AA", title:"Todo mayúsculas" },
+    { id:"normal", label:"Aa", title:"Normal (original)" },
+    { id:"lower",  label:"aa", title:"Todo minúsculas" },
+  ];
 
-        {/* Documental Style */}
-        <div style={cardStyle("style_doc", false)} onClick={()=>setSelected("style_doc")}>
-          <div style={{position:"absolute",top:0,left:0,right:0,height:1,background:"linear-gradient(90deg,transparent,rgba(255,255,255,0.10),transparent)",pointerEvents:"none"}} />
-          <StylePreviewDoc />
-          <div style={{padding:"10px 14px 12px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-            <div>
-              <div style={{fontSize:"0.82rem",fontWeight:600,color:"rgba(255,255,255,0.85)",fontFamily:"'Inter',sans-serif"}}>Documental Style</div>
-              <div style={{fontSize:"0.68rem",color:"rgba(255,255,255,0.32)",fontFamily:"'Inter',sans-serif",marginTop:2}}>Sans-serif fina · Legible · Cinematográfico</div>
-            </div>
+  // Mockup caption rendering
+  const renderMockupCaption = () => {
+    const sc = captSize / 100;
+    const fontMap = { outfit:"'Outfit',sans-serif", inter:"'Inter',sans-serif", raleway:"'Raleway',sans-serif", playfair:"'Playfair Display',serif" };
+    const ff = fontMap[captFont] || fontMap.outfit;
+    const applyCase = (t) => captCase === "upper" ? t.toUpperCase() : captCase === "normal" ? t : t.toLowerCase();
+    const words = ["este","es","el","preview"];
+
+    // Tamaños calibrados: CSS real halved (22/29/26px) × escala mockup
+    // style_sub=22px → 11px  |  style_bold=29px → 14px  |  style_doc=26px → 13px
+    const strokeSt = captStroke ? { WebkitTextStroke:"1px rgba(0,0,0,0.9)", paintOrder:"stroke fill" } : {};
+    if (selected === "style_sub") return (
+      <div style={{ position:"absolute", left:0, right:0, bottom:`${subPos}%`,
+        background:"rgba(0,0,0,0.72)", padding:"3px 0",
+        display:"flex", alignItems:"center", justifyContent:"center", gap:4 }}>
+        {words.map((w,i) => <span key={i} style={{ fontFamily:ff, fontWeight:400, fontSize:Math.round(11*sc), color:captColor, letterSpacing:"0.3px", ...strokeSt }}>{applyCase(w)}</span>)}
+      </div>
+    );
+    if (selected === "style_bold") return (
+      <div style={{ position:"absolute", left:0, right:0, bottom:`${subPos}%`,
+        display:"flex", alignItems:"center", justifyContent:"center", gap:4 }}>
+        {words.map((w,i) => <span key={i} style={{ fontFamily:ff, fontWeight:900, fontSize:Math.round(14*sc), color:captColor, letterSpacing:"1.5px", textShadow:"-1px -1px 0 #000,1px 1px 0 #000", ...strokeSt }}>{applyCase(w.toUpperCase())}</span>)}
+      </div>
+    );
+    if (selected === "style_doc") return (
+      <div style={{ position:"absolute", left:0, right:0, bottom:`${subPos}%`,
+        display:"flex", alignItems:"center", justifyContent:"center", gap:4 }}>
+        {words.map((w,i) => <span key={i} style={{ fontFamily:ff, fontWeight:300, fontSize:Math.round(13*sc), color:captColor, letterSpacing:"2px", textShadow:"0 0 4px #000", ...strokeSt }}>{applyCase(w)}</span>)}
+      </div>
+    );
+    return <div style={{position:"absolute",left:0,right:0,bottom:`${subPos}%`,display:"flex",justifyContent:"center"}}>
+      <span style={{fontSize:9,color:"rgba(255,255,255,0.35)",fontFamily:"'Outfit',sans-serif"}}>← elige un estilo</span>
+    </div>;
+  };
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+
+      {/* Heading */}
+      <div style={{ fontSize:"clamp(16px,2.5vw,32px)", letterSpacing:"-0.02em", color:"rgba(148,155,236,0.95)",
+        fontFamily:"'Outfit',sans-serif", fontWeight:800, textTransform:"uppercase",
+        lineHeight:1.05, textAlign:"center", textShadow:"0 0 60px rgba(124,133,224,0.35)" }}>
+        Elige el estilo de captions
+      </div>
+
+      {/* Widescreen mockup */}
+      <div style={{ display:"flex", flexDirection:"column", alignItems:"center", userSelect:"none" }}>
+        <div style={{ fontSize:9, color:"rgba(255,255,255,0.28)", marginBottom:6,
+          fontFamily:"'Inter',sans-serif", letterSpacing:".1em", textTransform:"uppercase" }}>
+          ↕ Arrastra para posicionar · hover para tamaño
+        </div>
+        <div
+          ref={mockupRef}
+          onMouseDown={e=>{ e.preventDefault(); setDragging(true); }}
+          onTouchStart={()=>setDragging(true)}
+          onMouseEnter={()=>setHovering(true)}
+          onMouseLeave={()=>setHovering(false)}
+          style={{
+            position:"relative", width:"100%", maxWidth:520, height:Math.round(520*9/16),
+            borderRadius:12, background:"#0c0c0f", overflow:"hidden", cursor:"ns-resize",
+            border: `2px solid ${dragging ? "rgba(94,106,210,0.7)" : "rgba(255,255,255,0.12)"}`,
+            boxShadow: "0 8px 40px rgba(0,0,0,0.70), 0 0 0 1px rgba(255,255,255,0.04)",
+            transition:"border-color 0.15s",
+          }}
+        >
+          {/* Background: video o gradiente */}
+          {videoURL ? (
+            <video src={videoURL} autoPlay muted playsInline loop
+              style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover",pointerEvents:"none"}} />
+          ) : (
+            <div style={{position:"absolute",inset:0,background:"linear-gradient(135deg,#0d1117 0%,#1a1a2e 50%,#0d1117 100%)"}} />
+          )}
+          {/* Horizontal filmstrip guide lines */}
+          <div style={{position:"absolute",inset:0,
+            backgroundImage:"linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px)",
+            backgroundSize:"auto 30px" }} />
+          {/* Caption */}
+          {renderMockupCaption()}
+          {/* Drag handle line */}
+          {selected && (
             <div style={{
-              width:18,height:18,borderRadius:"50%",flexShrink:0,
-              border: selected==="style_doc" ? "1.5px solid #5E6AD2" : "1px solid rgba(255,255,255,0.15)",
-              background: selected==="style_doc" ? "rgba(94,106,210,0.15)" : "transparent",
-              display:"flex",alignItems:"center",justifyContent:"center",
-              transition:"all 0.18s",
+              position:"absolute", left:0, right:0, bottom:`${subPos}%`,
+              height:2, background:"rgba(94,106,210,0.60)",
+              pointerEvents:"none",
             }}>
-              {selected==="style_doc" && <span style={{width:7,height:7,borderRadius:"50%",background:"#5E6AD2",display:"block"}} />}
+              <span style={{
+                position:"absolute", right:6, top:-9, fontSize:9,
+                background:"rgba(94,106,210,0.85)", color:"#fff",
+                padding:"1px 5px", borderRadius:3,
+                fontFamily:"'Inter',sans-serif", fontWeight:700,
+              }}>↕ {subPos}%</span>
             </div>
+          )}
+          {/* Size hover popup */}
+          {hovering && selected && (
+            <div style={{
+              position:"absolute", top:8, right:8, zIndex:10,
+              background:"rgba(12,12,15,0.92)", border:"1px solid rgba(94,106,210,0.40)",
+              borderRadius:8, padding:"6px 8px",
+              display:"flex", flexDirection:"column", gap:4,
+            }}>
+              <div style={{fontSize:8,color:"rgba(255,255,255,0.45)",fontFamily:"'Inter',sans-serif",letterSpacing:".08em",textTransform:"uppercase",marginBottom:2}}>Tamaño</div>
+              <div style={{display:"flex",gap:4}}>
+                {SIZE_OPTS.map(s=>(
+                  <button key={s.id} onClick={e=>{e.stopPropagation();setCaptSize(s.id);}} style={{
+                    width:26, height:22, borderRadius:5, border:"none", cursor:"pointer",
+                    background: captSize===s.id ? "rgba(94,106,210,0.50)" : "rgba(255,255,255,0.08)",
+                    color: captSize===s.id ? "#fff" : "rgba(255,255,255,0.55)",
+                    fontFamily:"'Inter',sans-serif", fontSize:10, fontWeight:700,
+                    outline: captSize===s.id ? "1px solid rgba(94,106,210,0.75)" : "1px solid transparent",
+                    transition:"all 0.12s",
+                  }}>{s.label}</button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* 4 style cards */}
+      <div style={{display:"flex",gap:8}}>
+        {STYLES.map(({id, Preview, label, sub})=>(
+          <div key={id} style={cardSt(id)} onClick={()=>setSelected(id)}>
+            <div style={{position:"absolute",top:0,left:0,right:0,height:1,background:"linear-gradient(90deg,transparent,rgba(255,255,255,0.10),transparent)",pointerEvents:"none"}} />
+            <Preview font={captFont} color={captColor} />
+            <div style={{padding:"8px 10px 10px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+              <div>
+                <div style={{fontSize:"0.76rem",fontWeight:600,color:"rgba(255,255,255,0.85)",fontFamily:"'Inter',sans-serif"}}>{label}</div>
+                <div style={{fontSize:"0.62rem",color:"rgba(255,255,255,0.30)",fontFamily:"'Inter',sans-serif",marginTop:1}}>{sub}</div>
+              </div>
+              <div style={{
+                width:16,height:16,borderRadius:"50%",flexShrink:0,
+                border: selected===id ? "1.5px solid #5E6AD2" : "1px solid rgba(255,255,255,0.15)",
+                background: selected===id ? "rgba(94,106,210,0.15)" : "transparent",
+                display:"flex",alignItems:"center",justifyContent:"center", transition:"all 0.18s",
+              }}>
+                {selected===id && <span style={{width:6,height:6,borderRadius:"50%",background:"#5E6AD2",display:"block"}} />}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Controls row */}
+      <div style={{ background:"rgba(255,255,255,0.02)", border:"1px solid rgba(255,255,255,0.06)",
+        borderRadius:"0.8rem", padding:"12px 14px", display:"flex", flexDirection:"column", gap:10 }}>
+
+        {/* Tipografía */}
+        <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+          <span style={{fontSize:10,color:"rgba(255,255,255,0.45)",fontFamily:"'Inter',sans-serif",letterSpacing:".08em",textTransform:"uppercase",minWidth:70}}>Tipografía</span>
+          <div style={{display:"flex",gap:5}}>
+            {FONT_OPTS.map(f=>(
+              <button key={f.id} onClick={()=>setCaptFont(f.id)} style={{
+                padding:"4px 10px", borderRadius:5, border:"none", cursor:"pointer",
+                background: captFont===f.id ? "rgba(94,106,210,0.30)" : "rgba(255,255,255,0.06)",
+                color: captFont===f.id ? "#fff" : "rgba(255,255,255,0.50)",
+                fontFamily:"'Inter',sans-serif", fontSize:11,
+                outline: captFont===f.id ? "1px solid rgba(94,106,210,0.55)" : "1px solid transparent",
+                transition:"all 0.15s",
+              }}>{f.label}</button>
+            ))}
           </div>
         </div>
 
-        {/* Retro Classic — NUEVO */}
-        <div style={cardStyle("style_retro", false)} onClick={()=>setSelected("style_retro")}>
-          <div style={{position:"absolute",top:0,left:0,right:0,height:1,background:"linear-gradient(90deg,transparent,rgba(255,255,255,0.10),transparent)",pointerEvents:"none"}} />
-          <StylePreviewRetro />
-          <div style={{padding:"10px 14px 12px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-            <div>
-              <div style={{fontSize:"0.82rem",fontWeight:600,color:"rgba(255,255,255,0.85)",fontFamily:"'Inter',sans-serif"}}>Retro Classic</div>
-              <div style={{fontSize:"0.68rem",color:"rgba(255,255,255,0.32)",fontFamily:"'Inter',sans-serif",marginTop:2}}>Serif itálica · Dorado · Borde negro</div>
-            </div>
-            <div style={{
-              width:18,height:18,borderRadius:"50%",flexShrink:0,
-              border: selected==="style_retro" ? "1.5px solid #5E6AD2" : "1px solid rgba(255,255,255,0.15)",
-              background: selected==="style_retro" ? "rgba(94,106,210,0.15)" : "transparent",
-              display:"flex",alignItems:"center",justifyContent:"center",
-              transition:"all 0.18s",
-            }}>
-              {selected==="style_retro" && <span style={{width:7,height:7,borderRadius:"50%",background:"#5E6AD2",display:"block"}} />}
+        {/* Color */}
+        {selected && (
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <span style={{fontSize:10,color:"rgba(255,255,255,0.45)",fontFamily:"'Inter',sans-serif",letterSpacing:".08em",textTransform:"uppercase",minWidth:70}}>Color</span>
+            <div style={{display:"flex",gap:6}}>
+              {[{hex:"#FFFFFF",label:"Blanco"},{hex:"#F5C518",label:"Amarillo"}].map(opt=>(
+                <button key={opt.hex} onClick={()=>setCaptColor(opt.hex)} style={{
+                  display:"flex", alignItems:"center", gap:5,
+                  padding:"4px 10px", borderRadius:5, border:"none", cursor:"pointer",
+                  background: captColor===opt.hex ? "rgba(94,106,210,0.25)" : "rgba(255,255,255,0.06)",
+                  color: captColor===opt.hex ? "#fff" : "rgba(255,255,255,0.50)",
+                  fontFamily:"'Inter',sans-serif", fontSize:11,
+                  outline: captColor===opt.hex ? "1px solid rgba(94,106,210,0.55)" : "1px solid transparent",
+                  transition:"all 0.15s",
+                }}>
+                  <span style={{width:10,height:10,borderRadius:"50%",background:opt.hex,border:"1px solid rgba(255,255,255,0.2)",flexShrink:0}} />
+                  {opt.label}
+                </button>
+              ))}
             </div>
           </div>
+        )}
+
+        {/* Texto (case) */}
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <span style={{fontSize:10,color:"rgba(255,255,255,0.45)",fontFamily:"'Inter',sans-serif",letterSpacing:".08em",textTransform:"uppercase",minWidth:70}}>Texto</span>
+          <div style={{display:"flex",gap:5}}>
+            {CASE_OPTS.map(c=>(
+              <button key={c.id} onClick={()=>setCaptCase(c.id)} title={c.title} style={{
+                width:34, height:26, borderRadius:5, border:"none", cursor:"pointer",
+                background: captCase===c.id ? "rgba(94,106,210,0.30)" : "rgba(255,255,255,0.06)",
+                color: captCase===c.id ? "#fff" : "rgba(255,255,255,0.45)",
+                fontFamily:"'Outfit',sans-serif",
+                fontSize: c.id==="upper" ? 11 : c.id==="normal" ? 12 : 10,
+                fontWeight: c.id==="upper" ? 800 : c.id==="normal" ? 600 : 400,
+                outline: captCase===c.id ? "1px solid rgba(94,106,210,0.55)" : "1px solid transparent",
+                transition:"all 0.15s", letterSpacing: c.id==="upper" ? "0.5px" : 0,
+              }}>{c.label}</button>
+            ))}
+          </div>
+        </div>
+
+        {/* Tamaño (también accesible fuera del hover) */}
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <span style={{fontSize:10,color:"rgba(255,255,255,0.45)",fontFamily:"'Inter',sans-serif",letterSpacing:".08em",textTransform:"uppercase",minWidth:70}}>Tamaño</span>
+          <div style={{display:"flex",gap:5}}>
+            {SIZE_OPTS.map(s=>(
+              <button key={s.id} onClick={()=>setCaptSize(s.id)} style={{
+                width:30, height:26, borderRadius:5, border:"none", cursor:"pointer",
+                background: captSize===s.id ? "rgba(94,106,210,0.30)" : "rgba(255,255,255,0.06)",
+                color: captSize===s.id ? "#fff" : "rgba(255,255,255,0.50)",
+                fontFamily:"'Inter',sans-serif", fontSize:11, fontWeight:700,
+                outline: captSize===s.id ? "1px solid rgba(94,106,210,0.55)" : "1px solid transparent",
+                transition:"all 0.15s",
+              }}>{s.label}</button>
+            ))}
+          </div>
+        </div>
+
+        {/* Stroke (contorno de texto) */}
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <span style={{fontSize:10,color:"rgba(255,255,255,0.45)",fontFamily:"'Inter',sans-serif",letterSpacing:".08em",textTransform:"uppercase",minWidth:70}}>Stroke</span>
+          <button onClick={()=>setCaptStroke(s=>!s)} style={{
+            padding:"4px 12px", borderRadius:5, border:"none", cursor:"pointer",
+            background: captStroke ? "rgba(94,106,210,0.30)" : "rgba(255,255,255,0.06)",
+            color: captStroke ? "#fff" : "rgba(255,255,255,0.45)",
+            fontFamily:"'Inter',sans-serif", fontSize:11, fontWeight:600,
+            outline: captStroke ? "1px solid rgba(94,106,210,0.55)" : "1px solid transparent",
+            transition:"all 0.15s",
+          }}>{captStroke ? "ON" : "OFF"}</button>
         </div>
 
       </div>
-      {/* Sonidos de efecto */}
+
+      {/* Sonido */}
       {selected && (
-        <div style={{
-          background:"rgba(255,255,255,0.025)", border:"1px solid rgba(255,255,255,0.07)",
-          borderRadius:"0.7rem", padding:"10px 14px", marginBottom:14,
-        }}>
-          <div style={{fontSize:11,fontWeight:600,color:"rgba(255,255,255,0.72)",fontFamily:"'Inter',sans-serif",marginBottom:8}}>Sonido</div>
+        <div style={{ background:"rgba(255,255,255,0.02)", border:"1px solid rgba(255,255,255,0.06)",
+          borderRadius:"0.7rem", padding:"10px 14px" }}>
+          <div style={{fontSize:10,fontWeight:600,color:"rgba(255,255,255,0.60)",fontFamily:"'Inter',sans-serif",marginBottom:7,letterSpacing:".08em",textTransform:"uppercase"}}>Sonido</div>
           <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
             {SFX_OPTIONS.map(s=>(
               <button key={s.id} onClick={()=>setSfxPack(s.id)} style={{
-                padding:"5px 11px", borderRadius:6, border:"none", cursor:"pointer",
+                padding:"4px 11px", borderRadius:6, border:"none", cursor:"pointer",
                 background: sfxPack===s.id ? "rgba(94,106,210,0.30)" : "rgba(255,255,255,0.06)",
                 color: sfxPack===s.id ? "#fff" : "rgba(255,255,255,0.50)",
                 fontFamily:"'Inter',sans-serif", fontSize:12,
@@ -1404,16 +1699,12 @@ function StylePickerHorizontal({ onSelect, onBack }) {
               }}>{s.icon} {s.label}</button>
             ))}
           </div>
-          {sfxPack !== "none" && (
-            <div style={{marginTop:7,fontSize:10,color:"rgba(255,255,255,0.28)",fontFamily:"'Inter',sans-serif"}}>
-              ℹ SFX requiere assets de audio — próximamente disponibles
-            </div>
-          )}
         </div>
       )}
 
+      {/* Empezar */}
       <button
-        onClick={()=>{ if(selected) onSelect(selected, "#FFE033", true, 15, "outfit", "default", sfxPack); }}
+        onClick={()=>{ if(selected) onSelect(selected, captColor, true, subPos, captFont, "default", sfxPack, captCase, captSize, captStroke); }}
         disabled={!selected}
         style={{
           width:"100%", padding:"14px", borderRadius:"0.9rem",
@@ -1422,16 +1713,13 @@ function StylePickerHorizontal({ onSelect, onBack }) {
           background: selected ? "linear-gradient(135deg, #4a54c1, #5E6AD2)" : "rgba(255,255,255,0.04)",
           color: selected ? "#fff" : "rgba(255,255,255,0.22)",
           border: selected ? "none" : "1px solid rgba(255,255,255,0.07)",
-          boxShadow: selected
-            ? "0 0 0 1px rgba(94,106,210,0.50), 0 4px 24px rgba(94,106,210,0.40), inset 0 1px 0 rgba(255,255,255,0.12)"
-            : "none",
+          boxShadow: selected ? "0 0 0 1px rgba(94,106,210,0.50),0 4px 24px rgba(94,106,210,0.40)" : "none",
           transition:"all 0.22s",
-          position:"relative", overflow:"hidden",
         }}
       >
         EMPEZAR →
       </button>
-      <div style={{textAlign:"center", marginTop:44}}>
+      <div style={{textAlign:"center", marginTop:16}}>
         <button onClick={onBack} style={{...backBtnStyle,display:"inline-flex",marginBottom:0}}
           onMouseEnter={e=>e.currentTarget.style.color="rgba(255,255,255,0.65)"}
           onMouseLeave={e=>e.currentTarget.style.color="rgba(255,255,255,0.35)"}
@@ -1688,6 +1976,244 @@ function SectorCard({ icon, number, title, desc, available, onClick }) {
   );
 }
 
+// ── Panel de Transcripción de Audio/Vídeo ───────────────────────────────────
+const TRANS_STEPS = ["Archivo recibido", "Cargando modelo Whisper", "Transcribiendo audio", "Generando SRT y TXT"];
+
+function TranscribePanel({ onBack }) {
+  const [phase,    setPhase]    = useStateU("idle");   // idle | processing | done | error
+  const [step,     setStep]     = useStateU(-1);
+  const [bar,      setBar]      = useStateU(0);
+  const [fileName, setFileName] = useStateU(null);
+  const [jobId,    setJobId]    = useStateU(null);
+  const [error,    setError]    = useStateU("");
+  const [model,    setModel]    = useStateU("medium");
+  const [result,   setResult]   = useStateU(null);
+  const [copied,   setCopied]   = useStateU(false);
+  const [dragOver, setDragOver] = useStateU(false);
+  const esRef        = useRefU(null);
+  const inputRef     = useRefU(null);
+  const timerRef     = useRefU(null);  // fake-progress timer durante transcripción
+
+  const clearTimer = () => {
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+  };
+
+  const reset = () => {
+    clearTimer();
+    if (esRef.current) { esRef.current.close(); esRef.current = null; }
+    setPhase("idle"); setStep(-1); setBar(0); setFileName(null);
+    setJobId(null); setError(""); setResult(null); setCopied(false);
+    if (inputRef.current) inputRef.current.value = "";
+  };
+
+  const start = useCallbackU(async (file) => {
+    setFileName(file.name); setPhase("processing"); setStep(0); setBar(4);
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("whisper_model", model);
+    let jId;
+    try {
+      const r = await fetch("/upload-transcribe", { method:"POST", body:fd });
+      const d = await r.json(); jId = d.job_id; setJobId(jId);
+    } catch(e) { setPhase("error"); setError("No se pudo conectar con el servidor."); return; }
+
+    const es = new EventSource(`/progress-transcribe/${jId}`);
+    esRef.current = es;
+    es.onmessage = (e) => {
+      const msg = e.data; if (msg === "KEEPALIVE") return;
+      if (msg === "CANCELLED") { clearTimer(); es.close(); esRef.current=null; reset(); return; }
+
+      if (msg.startsWith("TSTEP:1")) {
+        // Cargando modelo — rápido, sube a ~12%
+        setStep(1); setBar(12);
+        return;
+      }
+      if (msg.startsWith("TSTEP:2")) {
+        // Transcribiendo — aquí está el trabajo gordo, arranca el timer
+        setStep(2); setBar(18);
+        clearTimer();
+        timerRef.current = setInterval(() => {
+          setBar(prev => {
+            if (prev >= 88) return prev;
+            // Sube rápido al principio, cada vez más lento conforme se acerca a 88%
+            const inc = prev < 45 ? 1.8 : prev < 65 ? 0.9 : prev < 80 ? 0.4 : 0.15;
+            return Math.min(88, +(prev + inc).toFixed(2));
+          });
+        }, 3000); // cada 3 segundos
+        return;
+      }
+      if (msg.startsWith("TSTEP:3")) {
+        // Generando ficheros — transcripción ya terminó, sube a 93%
+        clearTimer();
+        setStep(3); setBar(93);
+        return;
+      }
+      if (msg.startsWith("TDONE")) {
+        clearTimer();
+        es.close(); esRef.current=null; setBar(100); setStep(99);
+        fetch(`/transcribe-result/${jId}`).then(r=>r.json()).then(d=>{
+          setResult(d); setPhase("done");
+        }).catch(()=>{ setPhase("error"); setError("No se pudo leer el resultado."); });
+        return;
+      }
+      if (msg.startsWith("ERROR:")) { clearTimer(); es.close(); esRef.current=null; setPhase("error"); setError(msg.replace("ERROR:","")); }
+    };
+    es.onerror = () => { clearTimer(); es.close(); esRef.current=null; setPhase("error"); setError("Conexión cortada — revisa que el servidor siga corriendo."); };
+  }, [model]);
+
+  const onFiles = (files) => {
+    const f = files[0]; if (!f) return;
+    const ok = f.type.startsWith("video/") || f.type.startsWith("audio/")
+            || /\.(mp4|mov|mkv|avi|webm|mp3|wav|m4a|aac|ogg|flac)$/i.test(f.name);
+    if (!ok) return;
+    start(f);
+  };
+
+  const fmtDur = (s) => { const m=Math.floor(s/60), sec=Math.round(s%60); return `${m}:${String(sec).padStart(2,"0")}`; };
+
+  // ── IDLE: dropzone ──
+  if (phase === "idle") {
+    const id = "transcribe-file-input";
+    return (
+      <div>
+        {sectionLabel("Transcripción de Audio/Vídeo")}
+        <div style={{maxWidth:560, margin:"0 auto"}}>
+          <p style={{textAlign:"center", color:"rgba(255,255,255,0.42)", fontFamily:"'Inter',sans-serif", fontSize:13, marginBottom:22, lineHeight:1.6}}>
+            Sube un vídeo o audio y obtén la transcripción en <b style={{color:"rgba(255,255,255,0.7)"}}>SRT</b> (subtítulos con tiempos) y <b style={{color:"rgba(255,255,255,0.7)"}}>TXT</b> (texto plano).
+          </p>
+
+          {/* Selector de modelo */}
+          <div style={{display:"flex", gap:8, justifyContent:"center", marginBottom:18}}>
+            {[{id:"medium",label:"Whisper Medium",sub:"Rápido"},{id:"large-v3",label:"Whisper Large V3",sub:"Máxima calidad"}].map(m=>(
+              <button key={m.id} onClick={()=>setModel(m.id)} style={{
+                flex:1, padding:"12px 14px", borderRadius:12, cursor:"pointer", textAlign:"left",
+                background: model===m.id ? "rgba(94,106,210,0.18)" : "rgba(255,255,255,0.04)",
+                border: model===m.id ? "1.5px solid rgba(94,106,210,0.70)" : "1px solid rgba(255,255,255,0.10)",
+                transition:"all 0.18s",
+                boxShadow: model===m.id ? "0 0 0 1px rgba(94,106,210,0.25), 0 2px 12px rgba(94,106,210,0.20)" : "none",
+              }}>
+                <div style={{display:"flex", alignItems:"center", gap:6, marginBottom:3}}>
+                  {model===m.id && <span style={{width:7,height:7,borderRadius:"50%",background:"#5E6AD2",display:"inline-block",flexShrink:0}} />}
+                  <div style={{fontSize:13, fontWeight:700, color: model===m.id ? "#fff" : "rgba(255,255,255,0.60)", fontFamily:"'Inter',sans-serif"}}>{m.label}</div>
+                </div>
+                <div style={{fontSize:11, color: model===m.id ? "rgba(148,155,236,0.80)" : "rgba(255,255,255,0.28)", fontFamily:"'Inter',sans-serif"}}>{m.sub}</div>
+              </button>
+            ))}
+          </div>
+
+          {/* Dropzone (acepta audio + vídeo) */}
+          <input ref={inputRef} id={id} type="file" accept="video/*,audio/*,.mp4,.mov,.mkv,.mp3,.wav,.m4a,.aac,.ogg,.flac" onChange={(e)=>{if(e.target.files.length)onFiles(e.target.files);}} style={{display:"none"}} />
+          <div
+            onClick={()=>inputRef.current?.click()}
+            onDrop={(e)=>{e.preventDefault();setDragOver(false);if(e.dataTransfer.files.length)onFiles(e.dataTransfer.files);}}
+            onDragOver={(e)=>{e.preventDefault();setDragOver(true);}}
+            onDragLeave={(e)=>{e.preventDefault();setDragOver(false);}}
+            style={{
+              display:"block", cursor:"pointer", textAlign:"center", padding:"40px 24px", borderRadius:"1.4rem",
+              border: dragOver ? "1px dashed rgba(94,106,210,0.55)" : "1px dashed rgba(255,255,255,0.12)",
+              background: dragOver ? "rgba(94,106,210,0.05)" : "rgba(255,255,255,0.02)", transition:"all 0.2s",
+            }}>
+            <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:10}}>
+              <div style={{width:56,height:56,borderRadius:"0.9rem",background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.08)",display:"flex",alignItems:"center",justifyContent:"center",color:dragOver?"#5E6AD2":"rgba(255,255,255,0.55)"}}>
+                <UploadIcon />
+              </div>
+              <div style={{fontSize:"0.92rem",fontWeight:600,color:"#EDEDEF",fontFamily:"'Inter',sans-serif"}}>Suelta el archivo aquí</div>
+              <div style={{fontSize:"0.72rem",color:"rgba(255,255,255,0.32)",fontFamily:"'Inter',sans-serif"}}>
+                Vídeo o audio &nbsp;·&nbsp; <span style={{color:"#5E6AD2"}}>MP4 · MOV · MP3 · WAV · M4A</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div style={{textAlign:"center", marginTop:40}}>
+          <button onClick={onBack} style={{...backBtnStyle,display:"inline-flex",marginBottom:0}}
+            onMouseEnter={e=>e.currentTarget.style.color="rgba(255,255,255,0.65)"}
+            onMouseLeave={e=>e.currentTarget.style.color="rgba(255,255,255,0.35)"}>
+            <ArrowLeft /> Volver
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── PROCESSING ──
+  if (phase === "processing") {
+    return (
+      <div style={{maxWidth:480, width:"100%", margin:"0 auto", textAlign:"center"}}>
+        <div style={{
+          fontSize:"clamp(22px, 3vw, 48px)",
+          letterSpacing:"-0.02em",
+          color:"rgba(148,155,236,0.95)",
+          fontFamily:"'Outfit',sans-serif", fontWeight:800,
+          marginBottom:32, textTransform:"uppercase",
+          lineHeight:1.05, textAlign:"center",
+          textShadow:"0 0 60px rgba(124,133,224,0.35)",
+          width:"100%",
+        }}>Transcribiendo</div>
+        <div style={{fontSize:12,color:"rgba(255,255,255,0.4)",fontFamily:"'Inter',sans-serif",textAlign:"center",marginBottom:24,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{fileName}</div>
+        <div style={{display:"flex",flexDirection:"column",gap:13,padding:"0 20px"}}>
+          {TRANS_STEPS.map((label,i)=>(
+            <StepRow key={i} label={label} state={ step>=99 ? "done" : i<step?"done":i===step?"active":"pending" } />
+          ))}
+        </div>
+        <ProgressBar width={bar} showPct={true} />
+        <div style={{textAlign:"center", marginTop:30}}>
+          <button onClick={()=>{ if(jobId) fetch(`/api/cancel/${jobId}`,{method:"POST"}); reset(); }} style={{...backBtnStyle,display:"inline-flex",marginBottom:0}}>Cancelar</button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── ERROR ──
+  if (phase === "error") {
+    return (
+      <div style={{maxWidth:460, margin:"0 auto", textAlign:"center"}}>
+        {sectionLabel("Error")}
+        <div style={{padding:"18px 20px", background:"rgba(255,93,108,0.08)", border:"1px solid rgba(255,93,108,0.25)", borderRadius:14, color:"rgba(255,180,185,0.9)", fontFamily:"'Inter',sans-serif", fontSize:13, lineHeight:1.6}}>{error}</div>
+        <button onClick={reset} style={{...backBtnStyle,display:"inline-flex",marginTop:26}}><ArrowLeft /> Reintentar</button>
+      </div>
+    );
+  }
+
+  // ── DONE ──
+  return (
+    <div style={{maxWidth:640, margin:"0 auto"}}>
+      {sectionLabel("Transcripción lista")}
+
+      {/* Preview del texto — solo si hay contenido */}
+      {result?.preview && (
+        <div style={{
+          position:"relative", maxHeight:260, overflow:"auto", padding:"18px 20px", borderRadius:14,
+          background:"rgba(255,255,255,0.03)", border:"1px solid rgba(255,255,255,0.07)",
+          fontFamily:"'Inter',sans-serif", fontSize:13.5, lineHeight:1.7, color:"rgba(255,255,255,0.78)", marginBottom:18,
+        }}>
+          {result.preview}
+        </div>
+      )}
+
+      {/* Botones de descarga */}
+      <div style={{display:"flex", gap:10, justifyContent:"center"}}>
+        <a href={`/download-transcribe/${jobId}/srt`} download style={{
+          display:"inline-flex",alignItems:"center",gap:8, padding:"13px 22px", borderRadius:12, textDecoration:"none",
+          background:"linear-gradient(135deg,#4a54c1,#5E6AD2)", color:"#fff", fontFamily:"'Outfit',sans-serif", fontWeight:700, fontSize:13,
+          boxShadow:"0 4px 20px rgba(94,106,210,0.35)",
+        }}><DownloadIcon /> Descargar SRT</a>
+        <a href={`/download-transcribe/${jobId}/txt`} download style={{
+          display:"inline-flex",alignItems:"center",gap:8, padding:"13px 22px", borderRadius:12, textDecoration:"none",
+          background:"rgba(255,255,255,0.05)", color:"rgba(255,255,255,0.8)", border:"1px solid rgba(255,255,255,0.12)", fontFamily:"'Outfit',sans-serif", fontWeight:700, fontSize:13,
+        }}><DownloadIcon /> Descargar TXT</a>
+        <button onClick={()=>{ navigator.clipboard?.writeText(result?.full_text||"").then(()=>{setCopied(true);setTimeout(()=>setCopied(false),1600);}); }} style={{
+          display:"inline-flex",alignItems:"center",gap:8, padding:"13px 18px", borderRadius:12, cursor:"pointer",
+          background:"rgba(255,255,255,0.05)", color: copied?"#4ade80":"rgba(255,255,255,0.8)", border:"1px solid rgba(255,255,255,0.12)", fontFamily:"'Outfit',sans-serif", fontWeight:700, fontSize:13,
+        }}>{copied ? "✓ Copiado" : "Copiar texto"}</button>
+      </div>
+
+      <div style={{textAlign:"center", marginTop:34}}>
+        <button onClick={reset} style={{...backBtnStyle,display:"inline-flex",marginBottom:0}}><ArrowLeft /> Transcribir otro archivo</button>
+      </div>
+    </div>
+  );
+}
+
 // ── Selector de sector ──
 function SectorSelector({ onSelect, onBack }) {
   return (
@@ -1704,23 +2230,32 @@ function SectorSelector({ onSelect, onBack }) {
         />
         <SectorCard
           number={2}
-          icon="♪"
-          title="Sincronización de Audio"
-          desc="Alinea pistas, beats y efectos sonoros con tu vídeo"
-          available={false}
+          icon="✎"
+          title="Transcripción de Audio/Vídeo"
+          desc="Transcribe cualquier vídeo o audio y descárgalo en SRT y TXT"
+          available={true}
+          onClick={()=>onSelect('transcribe')}
         />
         <SectorCard
           number={3}
+          icon="⇌"
+          title="Sincronizar Audio"
+          desc="Alinea automáticamente el audio de OBS con el video de tu cámara"
+          available={true}
+          onClick={()=>onSelect('sync')}
+        />
+        <SectorCard
+          number={4}
           icon="◫"
           title="Gestión de Proyectos"
           desc="Organiza tus vídeos, assets y exportaciones en un solo lugar"
           available={false}
         />
         <SectorCard
-          number={4}
+          number={5}
           icon="⬡"
-          title="Edición de Vídeo IA"
-          desc="Animaciones HyperFrames, transiciones generativas y efectos con IA"
+          title="Motion Graphic Animations"
+          desc="Crea motion graphics y animaciones para tus vídeos con HyperFrames"
           available={false}
         />
       </div>
@@ -1739,6 +2274,8 @@ function SectorSelector({ onSelect, onBack }) {
 
 // ══════════════════════════════════════════════════════
 function Uploader({ delay = 0, onDone, onBack }) {
+  const ShinyButton = window.ShinyButton;
+  const AudioSync   = window.AudioSync;
   const [sector,      setSector]      = useStateU(null); // null | 'picking' | 'shorts'
   const [contentType, setContentType] = useStateU(null); // null | 'vertical' | 'horizontal'
   const [mode, setMode] = useStateU(null);               // null | 'subtitles' | 'clips'
@@ -1784,6 +2321,12 @@ function Uploader({ delay = 0, onDone, onBack }) {
   const pendingAnimRef  = useRefU("default");
   const [pendingSfx,    setPendingSfx]    = useStateU("none");
   const pendingSfxRef   = useRefU("none");
+  const [pendingCase,   setPendingCase]   = useStateU("lower");
+  const pendingCaseRef  = useRefU("lower");
+  const [pendingSize,   setPendingSize]   = useStateU(100);
+  const pendingSizeRef  = useRefU(100);
+  const [pendingStroke, setPendingStroke] = useStateU(false);
+  const pendingStrokeRef = useRefU(false);
   const [captionStyle,  setCaptionStyle]  = useStateU(null);
   const [whisperModel,  setWhisperModel]  = useStateU(null);
   const [pendingVideoURL, setPendingVideoURL] = useStateU(null);
@@ -1800,6 +2343,8 @@ function Uploader({ delay = 0, onDone, onBack }) {
   const subEsRef        = useRefU(null); // EventSource activo para subtítulos
   const clipEsRef       = useRefU(null); // EventSource activo para clips
   const renderTimerRef  = useRefU(null); // Timer de animación para el paso de render
+  const subTimerRef     = useRefU(null); // Fake-progress timer durante transcripción de subtítulos
+  const clipTimerRef    = useRefU(null); // Fake-progress timer durante transcripción de clips
 
   // ── Animación client-side para el paso de render (step 4) ──
   // Si el backend no envía RENDER_PCT, el bar sube igualmente de forma gradual
@@ -1809,8 +2354,8 @@ function Uploader({ delay = 0, onDone, onBack }) {
       if (renderTimerRef.current) clearInterval(renderTimerRef.current);
       renderTimerRef.current = setInterval(() => {
         setSubBar(prev => {
-          if (prev >= 98) { clearInterval(renderTimerRef.current); return 98; }
-          return prev + 0.4; // ~90 segundos para llegar de 92 a 98
+          if (prev >= 96) { clearInterval(renderTimerRef.current); return 96; }
+          return prev + 0.1; // ~115s de 50 a 96 — fallback si no llegan RENDER_PCT
         });
       }, 250);
     } else {
@@ -1827,11 +2372,13 @@ function Uploader({ delay = 0, onDone, onBack }) {
     onBack && onBack();
     setContentType(null);
     setMode(null);
+    if(subTimerRef.current)  { clearInterval(subTimerRef.current);  subTimerRef.current  = null; }
+    if(clipTimerRef.current) { clearInterval(clipTimerRef.current); clipTimerRef.current = null; }
     setSubPhase("idle"); setSubStep(-1); setSubBar(0); setSubFile(null); setSubJobId(null); setSubError("");
     setClipPhase("idle"); setClipStep(-1); setClipBar(0); setClipFile(null); setClipJobId(null); setClipError("");
     setTotalClips(0); setCurClipIdx(0); setCurClipTitle(""); setDoneClips([]);
     setClipVideoType(null); setClipPipPos('bottom-right'); setClipDurRange('medium');
-    setPendingFile(null); setPendingMode(null); setPendingStyle(null); setPendingColor("#FFE033"); setPendingZoom(true); pendingZoomRef.current=true; setPendingPos(15); pendingPosRef.current=15; setPendingFont("outfit"); pendingFontRef.current="outfit"; setPendingAnim("default"); pendingAnimRef.current="default"; setPendingSfx("none"); pendingSfxRef.current="none"; setCaptionStyle(null); setWhisperModel(null);
+    setPendingFile(null); setPendingMode(null); setPendingStyle(null); setPendingColor("#FFE033"); setPendingZoom(true); pendingZoomRef.current=true; setPendingPos(15); pendingPosRef.current=15; setPendingFont("outfit"); pendingFontRef.current="outfit"; setPendingAnim("default"); pendingAnimRef.current="default"; setPendingSfx("none"); pendingSfxRef.current="none"; setPendingCase("lower"); pendingCaseRef.current="lower"; setPendingSize(100); pendingSizeRef.current=100; setCaptionStyle(null); setWhisperModel(null);
     if(pendingVideoURLRef.current) { URL.revokeObjectURL(pendingVideoURLRef.current); pendingVideoURLRef.current = null; }
     setPendingVideoURL(null); setVideoReadyPhase(null);
     setDragOver(false);
@@ -1849,7 +2396,7 @@ function Uploader({ delay = 0, onDone, onBack }) {
   };
 
   // ── Upload subtítulos ──
-  const startSub = useCallbackU(async (file, style, orientation = "vertical", wModel = "medium", highlightColor = "#FFE033", enableZoom = true, captionPos = 15, font = "outfit", anim = "default") => {
+  const startSub = useCallbackU(async (file, style, orientation = "vertical", wModel = "medium", highlightColor = "#FFE033", enableZoom = true, captionPos = 15, font = "outfit", anim = "default", captCase = "lower", captSize = 100, captStroke = false) => {
     setSubFile(file.name); setSubPhase("processing"); setSubStep(0); setSubBar(5);
     const fd=new FormData();
     fd.append("file", file);
@@ -1861,6 +2408,9 @@ function Uploader({ delay = 0, onDone, onBack }) {
     fd.append("caption_pos", String(captionPos));
     fd.append("caption_font", font);
     fd.append("caption_anim", anim);
+    fd.append("caption_case", captCase);
+    fd.append("caption_size", String(captSize));
+    fd.append("caption_stroke", captStroke ? "true" : "false");
     let jId;
     try { const r=await fetch("/upload",{method:"POST",body:fd}); const d=await r.json(); jId=d.job_id; setSubJobId(jId); }
     catch(e){ setSubPhase("error"); setSubError("No se pudo conectar."); return; }
@@ -1868,13 +2418,50 @@ function Uploader({ delay = 0, onDone, onBack }) {
     subEsRef.current = es;
     es.onmessage=(e)=>{
       const msg=e.data; if(msg==="KEEPALIVE") return;
-      if(msg==="CANCELLED"){ es.close(); subEsRef.current=null; setSubPhase("idle"); setSubStep(-1); setSubBar(0); setSubFile(null); setSubJobId(null); return; }
-      if(msg.startsWith("RENDER_PCT:")){ const p=parseInt(msg.replace("RENDER_PCT:",""),10); if(!isNaN(p)) setSubBar(p); return; }
+      if(msg==="CANCELLED"){
+        if(subTimerRef.current){ clearInterval(subTimerRef.current); subTimerRef.current=null; }
+        es.close(); subEsRef.current=null; setSubPhase("idle"); setSubStep(-1); setSubBar(0); setSubFile(null); setSubJobId(null); return;
+      }
+      if(msg.startsWith("RENDER_PCT:")){
+        const rawPct=parseInt(msg.replace("RENDER_PCT:",""),10);
+        if(!isNaN(rawPct)){
+          // Remap 92-99 → 50-96 para dar al render más espacio visual
+          const displayPct = Math.round(50 + (rawPct - 92) / (99 - 92) * (96 - 50));
+          setSubBar(Math.max(50, Math.min(96, displayPct)));
+        }
+        return;
+      }
+      // STEP:2 = Transcribiendo — la parte pesada, arranca el timer
+      if(msg.startsWith("STEP:2")){
+        if(subTimerRef.current) clearInterval(subTimerRef.current);
+        setSubStep(1); setSubBar(10);
+        subTimerRef.current = setInterval(()=>{
+          setSubBar(prev=>{
+            if(prev>=40) return prev;
+            const inc = prev<22 ? 0.7 : prev<32 ? 0.3 : 0.1;
+            return Math.min(40, +(prev+inc).toFixed(2));
+          });
+        }, 3000);
+        return;
+      }
+      // Cualquier step posterior para el timer de transcripción
+      if(msg.startsWith("STEP:3")||msg.startsWith("STEP:4")||msg.startsWith("STEP:5")){
+        if(subTimerRef.current){ clearInterval(subTimerRef.current); subTimerRef.current=null; }
+      }
       for(const [k,i] of Object.entries(SUB_STEP_MAP)) if(msg.startsWith(k)){ setSubStep(i); setSubBar(SUB_BAR_MAP[i]||10); return; }
-      if(msg.startsWith("DONE")){ es.close(); subEsRef.current=null; setSubStep(99); setSubBar(100); setTimeout(()=>{ setSubPhase("done"); onDone && onDone(); },500); return; }
-      if(msg.startsWith("ERROR:")){ es.close(); subEsRef.current=null; setSubPhase("error"); setSubError(msg.replace("ERROR:","")); }
+      if(msg.startsWith("DONE")){
+        if(subTimerRef.current){ clearInterval(subTimerRef.current); subTimerRef.current=null; }
+        es.close(); subEsRef.current=null; setSubStep(99); setSubBar(100); setTimeout(()=>{ setSubPhase("done"); onDone && onDone(); },500); return;
+      }
+      if(msg.startsWith("ERROR:")){
+        if(subTimerRef.current){ clearInterval(subTimerRef.current); subTimerRef.current=null; }
+        es.close(); subEsRef.current=null; setSubPhase("error"); setSubError(msg.replace("ERROR:",""));
+      }
     };
-    es.onerror=()=>{ es.close(); subEsRef.current=null; setSubPhase("error"); setSubError("Conexión cortada — revisa que el servidor siga corriendo."); };
+    es.onerror=()=>{
+      if(subTimerRef.current){ clearInterval(subTimerRef.current); subTimerRef.current=null; }
+      es.close(); subEsRef.current=null; setSubPhase("error"); setSubError("Conexión cortada — revisa que el servidor siga corriendo.");
+    };
   },[]);
 
   // ── Upload clips ──
@@ -1896,24 +2483,46 @@ function Uploader({ delay = 0, onDone, onBack }) {
     clipEsRef.current = es;
     es.onmessage=(e)=>{
       const msg=e.data; if(msg==="KEEPALIVE") return;
-      if(msg==="CANCELLED"){ es.close(); clipEsRef.current=null; setClipPhase("idle"); setClipStep(-1); setClipBar(0); setClipFile(null); setClipJobId(null); setTotalClips(0); setCurClipIdx(0); setCurClipTitle(""); return; }
-      if(msg.startsWith("CSTEP:1")){ setClipStep(0); setClipBar(8);  return; }
-      if(msg.startsWith("CSTEP:2")){ setClipStep(1); setClipBar(18); return; }
-      if(msg.startsWith("CSTEP:3")){ setClipStep(2); setClipBar(28); return; }
-      if(msg.startsWith("CSTEP:4:")){ const n=parseInt(msg.split(":")[2])||0; setTotalClips(n); setClipStep(3); setClipBar(32); return; }
+      if(msg==="CANCELLED"){
+        if(clipTimerRef.current){ clearInterval(clipTimerRef.current); clipTimerRef.current=null; }
+        es.close(); clipEsRef.current=null; setClipPhase("idle"); setClipStep(-1); setClipBar(0); setClipFile(null); setClipJobId(null); setTotalClips(0); setCurClipIdx(0); setCurClipTitle(""); return;
+      }
+      if(msg.startsWith("CSTEP:1")){ setClipStep(0); setClipBar(6); return; }
+      if(msg.startsWith("CSTEP:2")){
+        // Transcribiendo vídeo completo — parte lenta, arranca timer
+        if(clipTimerRef.current) clearInterval(clipTimerRef.current);
+        setClipStep(1); setClipBar(12);
+        clipTimerRef.current = setInterval(()=>{
+          setClipBar(prev=>{
+            if(prev>=28) return prev;
+            const inc = prev<20 ? 1.0 : 0.4;
+            return Math.min(28, +(prev+inc).toFixed(2));
+          });
+        }, 3000);
+        return;
+      }
+      if(msg.startsWith("CSTEP:3")){
+        if(clipTimerRef.current){ clearInterval(clipTimerRef.current); clipTimerRef.current=null; }
+        setClipStep(2); setClipBar(32); return;
+      }
+      if(msg.startsWith("CSTEP:4:")){ const n=parseInt(msg.split(":")[2])||0; setTotalClips(n); setClipStep(3); setClipBar(36); return; }
       if(msg.startsWith("CCLIP:")){
         const p=msg.split(":"); const ci=parseInt(p[1])||1; const cn=parseInt(p[2])||1; const t=p.slice(3).join(":");
         setCurClipIdx(ci); setTotalClips(cn); setCurClipTitle(t);
         setClipStep(4);
-        setClipBar(32+Math.round(((ci-1)/cn)*62)); return;
+        setClipBar(36+Math.round(((ci-1)/cn)*58)); return;
       }
-      if(msg.startsWith("CCLIP_DONE:")){ const p=msg.split(":"); setClipBar(32+Math.round((parseInt(p[1])||1)/(parseInt(p[2])||1)*62)); return; }
+      if(msg.startsWith("CCLIP_DONE:")){ const p=msg.split(":"); setClipBar(36+Math.round((parseInt(p[1])||1)/(parseInt(p[2])||1)*58)); return; }
       if(msg.startsWith("CDONE:")){
+        if(clipTimerRef.current){ clearInterval(clipTimerRef.current); clipTimerRef.current=null; }
         es.close(); clipEsRef.current=null; setClipBar(100);
         try{ setDoneClips(JSON.parse(msg.replace("CDONE:","")));} catch(_){}
         setTimeout(()=>setClipPhase("done"),500); return;
       }
-      if(msg.startsWith("ERROR:")){ es.close(); clipEsRef.current=null; setClipPhase("error"); setClipError(msg.replace("ERROR:","")); }
+      if(msg.startsWith("ERROR:")){
+        if(clipTimerRef.current){ clearInterval(clipTimerRef.current); clipTimerRef.current=null; }
+        es.close(); clipEsRef.current=null; setClipPhase("error"); setClipError(msg.replace("ERROR:",""));
+      }
     };
     es.onerror=async ()=>{
       es.close(); clipEsRef.current=null;
@@ -1937,7 +2546,7 @@ function Uploader({ delay = 0, onDone, onBack }) {
     if(inputRef.current) inputRef.current.value="";
   };
 
-  const onStyleSelected = (style, color = "#FFE033", zoom = true, pos = 15, font = "outfit", anim = "default", sfx = "none") => {
+  const onStyleSelected = (style, color = "#FFE033", zoom = true, pos = 15, font = "outfit", anim = "default", sfx = "none", captCase = "lower", captSize = 100, captStroke = false) => {
     setCaptionStyle(style);
     setPendingStyle(style);
     pendingColorRef.current = color;
@@ -1952,6 +2561,12 @@ function Uploader({ delay = 0, onDone, onBack }) {
     setPendingAnim(anim);
     pendingSfxRef.current = sfx;
     setPendingSfx(sfx);
+    pendingCaseRef.current = captCase;
+    setPendingCase(captCase);
+    pendingSizeRef.current = captSize;
+    setPendingSize(captSize);
+    pendingStrokeRef.current = captStroke;
+    setPendingStroke(captStroke);
   };
 
   const onStyleBack = () => {
@@ -1969,6 +2584,12 @@ function Uploader({ delay = 0, onDone, onBack }) {
     pendingAnimRef.current = "default";
     setPendingSfx("none");
     pendingSfxRef.current = "none";
+    setPendingCase("lower");
+    pendingCaseRef.current = "lower";
+    setPendingSize(100);
+    pendingSizeRef.current = 100;
+    setPendingStroke(false);
+    pendingStrokeRef.current = false;
   };
 
   const onModelSelected = (model) => {
@@ -1982,6 +2603,9 @@ function Uploader({ delay = 0, onDone, onBack }) {
     const fn  = pendingFontRef.current;
     const an  = pendingAnimRef.current;
     const sfx = pendingSfxRef.current;
+    const cc  = pendingCaseRef.current;
+    const csz = pendingSizeRef.current;
+    const csk = pendingStrokeRef.current;
     setPendingFile(null);
     setPendingMode(null);
     setPendingStyle(null);
@@ -1992,10 +2616,13 @@ function Uploader({ delay = 0, onDone, onBack }) {
     pendingFontRef.current = "outfit";
     pendingAnimRef.current = "default";
     pendingSfxRef.current  = "none";
+    pendingCaseRef.current = "lower";
+    pendingSizeRef.current = 100;
+    pendingStrokeRef.current = false;
     if(pendingVideoURLRef.current) { URL.revokeObjectURL(pendingVideoURLRef.current); pendingVideoURLRef.current = null; }
     setPendingVideoURL(null); setVideoReadyPhase(null);
-    if(m === "horizontal-subtitles") startSub(f, s, "horizontal", model, c, true, 7, fn, an);
-    else if(m === "subtitles")       startSub(f, s, "vertical",   model, c, z, p, fn, an);
+    if(m === "horizontal-subtitles") startSub(f, s, "horizontal", model, c, true, p, fn, an, cc, csz, csk);
+    else if(m === "subtitles")       startSub(f, s, "vertical",   model, c, z, p, fn, an, cc, csz, false);
     else                             startClips(f, s, model, c, sfx);
   };
 
@@ -2007,6 +2634,8 @@ function Uploader({ delay = 0, onDone, onBack }) {
   const cancelJob = useCallbackU(async () => {
     const jId = subJobId || clipJobId;
     // Cerrar EventSource inmediatamente para parar la UI
+    if (subTimerRef.current)  { clearInterval(subTimerRef.current);  subTimerRef.current  = null; }
+    if (clipTimerRef.current) { clearInterval(clipTimerRef.current); clipTimerRef.current = null; }
     if (subEsRef.current)  { subEsRef.current.close();  subEsRef.current  = null; }
     if (clipEsRef.current) { clipEsRef.current.close(); clipEsRef.current = null; }
     // Notificar al servidor para que marque el job como cancelado
@@ -2030,8 +2659,12 @@ function Uploader({ delay = 0, onDone, onBack }) {
       const msg = e.data;
       if (msg === "KEEPALIVE") return;
       if (msg.startsWith("RENDER_PCT:")) {
-        const p = parseInt(msg.replace("RENDER_PCT:", ""), 10);
-        if (!isNaN(p)) setRerenderProgress(p);
+        const rawPct = parseInt(msg.replace("RENDER_PCT:", ""), 10);
+        if (!isNaN(rawPct)) {
+          // Remap 92-99 → 5-96 para que el progreso de re-render sea uniforme
+          const displayPct = Math.round(5 + (rawPct - 92) / (99 - 92) * (96 - 5));
+          setRerenderProgress(Math.max(5, Math.min(96, displayPct)));
+        }
         return;
       }
       if (msg.startsWith("DONE")) {
@@ -2064,7 +2697,7 @@ function Uploader({ delay = 0, onDone, onBack }) {
       transition={{duration:0.8,ease:[0.16,1,0.3,1],delay}}
       style={{
         width:"100%",
-        maxWidth: (sector === 'picking' || pendingFile) ? "min(960px, 92vw)" : "36rem",
+        maxWidth: (sector === 'picking' || pendingFile) ? "min(960px, 92vw)" : (sector === 'transcribe' ? "min(720px, 92vw)" : "36rem"),
         marginTop: sector === 'picking' ? "0" : "2.5rem",
         transition: "max-width 0.4s ease",
       }}
@@ -2073,22 +2706,9 @@ function Uploader({ delay = 0, onDone, onBack }) {
       {/* ══ PANTALLA INICIAL: EMPEZAR ══ */}
       {sector === null && (
         <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:0,paddingTop:130}}>
-          <button
-            onClick={()=>{ setSector('picking'); onDone && onDone(); }}
-            style={{
-              display:"inline-flex",alignItems:"center",gap:10,
-              background:"linear-gradient(135deg,#4a54c1,#5E6AD2)",
-              color:"#fff",fontFamily:"'Outfit',sans-serif",fontWeight:700,
-              fontSize:15,letterSpacing:"0.06em",textTransform:"uppercase",
-              padding:"15px 42px",borderRadius:12,border:"none",cursor:"pointer",
-              boxShadow:"0 0 0 1px rgba(94,106,210,0.50), 0 4px 28px rgba(94,106,210,0.45), inset 0 1px 0 rgba(255,255,255,0.14)",
-              transition:"all 0.2s ease",
-            }}
-            onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-2px)";e.currentTarget.style.boxShadow="0 0 0 1px rgba(94,106,210,0.65), 0 8px 36px rgba(94,106,210,0.55), inset 0 1px 0 rgba(255,255,255,0.18)";}}
-            onMouseLeave={e=>{e.currentTarget.style.transform="translateY(0)";e.currentTarget.style.boxShadow="0 0 0 1px rgba(94,106,210,0.50), 0 4px 28px rgba(94,106,210,0.45), inset 0 1px 0 rgba(255,255,255,0.14)";}}
-          >
+          <ShinyButton onClick={()=>{ setSector('picking'); onDone && onDone(); }}>
             Empezar
-          </button>
+          </ShinyButton>
         </div>
       )}
 
@@ -2106,6 +2726,72 @@ function Uploader({ delay = 0, onDone, onBack }) {
           onSelect={setContentType}
           onBack={()=>{ setSector('picking'); }}
         />
+      )}
+
+      {/* ══ SINCRONIZAR AUDIO ══ */}
+      {sector === 'sync' && (
+        <AudioSync onBack={()=>setSector('picking')} />
+      )}
+
+      {/* ══ TRANSCRIPCIÓN DE AUDIO/VÍDEO ══ */}
+      {sector === 'transcribe' && (
+        <TranscribePanel onBack={()=>setSector('picking')} />
+      )}
+
+      {/* ══ INTROS CON IA ══ */}
+      {sector === 'intros' && (
+        <div style={{ display:"flex", flexDirection:"column", alignItems:"center" }}>
+          {sectionLabel("Intros con IA")}
+          <div style={{
+            width:"100%", maxWidth:480,
+            background:"rgba(255,255,255,0.03)",
+            border:"1px solid rgba(94,106,210,0.22)",
+            borderRadius:"1.5rem", padding:"40px 36px",
+            display:"flex", flexDirection:"column", alignItems:"center", gap:18,
+            boxShadow:"0 0 60px rgba(94,106,210,0.10)",
+          }}>
+            <div style={{
+              width:64, height:64, borderRadius:"1.1rem",
+              background:"rgba(94,106,210,0.12)",
+              border:"1px solid rgba(94,106,210,0.28)",
+              display:"flex", alignItems:"center", justifyContent:"center",
+              fontSize:28,
+              boxShadow:"0 0 30px rgba(94,106,210,0.20)",
+            }}>⬡</div>
+            <div style={{ textAlign:"center" }}>
+              <div style={{ fontFamily:"'Outfit',sans-serif", fontWeight:700, fontSize:18, color:"#EDEDEF", marginBottom:8 }}>
+                En construcción
+              </div>
+              <div style={{ fontFamily:"'Inter',sans-serif", fontSize:13, color:"rgba(255,255,255,0.40)", lineHeight:1.6, maxWidth:320 }}>
+                El editor de intros animadas con HyperFrames estará disponible muy pronto.
+                Podrás crear intros tipo Statement y Stats Card para tus vídeos de YouTube.
+              </div>
+            </div>
+            <div style={{
+              display:"flex", gap:8, flexWrap:"wrap", justifyContent:"center",
+              marginTop:4,
+            }}>
+              {["Statement", "Stats Card"].map(t => (
+                <span key={t} style={{
+                  fontSize:10, letterSpacing:"0.12em", textTransform:"uppercase",
+                  fontFamily:"'Outfit',sans-serif", fontWeight:600,
+                  color:"rgba(94,106,210,0.70)",
+                  background:"rgba(94,106,210,0.08)",
+                  border:"1px solid rgba(94,106,210,0.20)",
+                  borderRadius:99, padding:"4px 12px",
+                }}>{t}</span>
+              ))}
+            </div>
+          </div>
+          <div style={{ marginTop:40 }}>
+            <button onClick={()=>setSector('picking')} style={{...backBtnStyle, display:"inline-flex", marginBottom:0}}
+              onMouseEnter={e=>e.currentTarget.style.color="rgba(255,255,255,0.65)"}
+              onMouseLeave={e=>e.currentTarget.style.color="rgba(255,255,255,0.35)"}
+            >
+              <ArrowLeft /> Volver
+            </button>
+          </div>
+        </div>
       )}
 
       {/* ══ VERTICAL: SELECCIÓN DE MODO ══ */}
@@ -2165,7 +2851,7 @@ function Uploader({ delay = 0, onDone, onBack }) {
 
       {/* ══ STYLE PICKER — HORIZONTAL ══ */}
       {pendingFile && !pendingStyle && videoReadyPhase !== "preview" && pendingMode === "horizontal-subtitles" && !isProcessing && !isDone && !isError && (
-        <StylePickerHorizontal onSelect={onStyleSelected} onBack={onStyleBack} />
+        <StylePickerHorizontal onSelect={onStyleSelected} onBack={onStyleBack} videoURL={pendingVideoURL} />
       )}
 
       {/* ══ WHISPER MODEL PICKER ══ */}

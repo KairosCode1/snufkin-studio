@@ -42,7 +42,9 @@ else:
 # Pipeline de auto_captions
 sys.path.insert(0, str(BASE_DIR))
 from auto_captions import process_video, process_long_video, DEFAULT_LANGUAGE, DEFAULT_MODEL
+from auto_captions import transcribe_to_files
 from auto_captions import OUTPUT_DIR, INPUT_DIR, PROJECTS_DIR
+from auto_captions import sync_audio_tracks
 
 # ── Config ───────────────────────────────────────────────────────────────────
 PORT = 7331
@@ -90,6 +92,8 @@ def _save_config(data: dict):
 # Jobs en memoria
 jobs:      dict = {}   # subtítulos: job_id → {queue, status, output, filename, cancelled}
 clip_jobs: dict = {}   # auto clips: job_id → {queue, status, clips, filename, cancelled}
+trans_jobs: dict = {}  # transcripción: job_id → {queue, status, result, filename, cancelled}
+sync_jobs: dict  = {}  # audio sync: job_id → {queue, status, output, offset, cancelled}
 
 
 # ── Rutas ────────────────────────────────────────────────────────────────────
@@ -112,6 +116,9 @@ async def upload(
     caption_pos: str = Form("15"),
     caption_font: str = Form("outfit"),
     caption_anim: str = Form("default"),
+    caption_case: str = Form("lower"),
+    caption_size: str = Form("100"),
+    caption_stroke: str = Form("false"),
 ):
     job_id = str(uuid.uuid4())[:8]
     INPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -120,7 +127,9 @@ async def upload(
         shutil.copyfileobj(file.file, f)
 
     q = queue.Queue()
-    _pos = int(caption_pos) if caption_pos.isdigit() else 15
+    _pos    = int(caption_pos)  if caption_pos.isdigit()  else 15
+    _size   = int(caption_size) if caption_size.isdigit() else 100
+    _stroke = caption_stroke.lower() == "true"
     jobs[job_id] = {
         "queue": q, "status": "processing", "output": None,
         "filename": file.filename, "cancelled": False,
@@ -130,6 +139,8 @@ async def upload(
         "enable_zoom": enable_zoom.lower() == "true",
         "caption_pos": _pos,
         "caption_font": caption_font, "caption_anim": caption_anim,
+        "caption_case": caption_case, "caption_size": _size,
+        "caption_stroke": _stroke,
     }
 
     def run():
@@ -140,7 +151,10 @@ async def upload(
                           enable_zoom=(enable_zoom.lower() == "true"),
                           caption_pos=_pos,
                           caption_font=caption_font,
-                          caption_anim=caption_anim)
+                          caption_anim=caption_anim,
+                          caption_case=caption_case,
+                          caption_size=_size,
+                          caption_stroke=_stroke)
             out = OUTPUT_DIR / f"{video_path.stem}-captions.mp4"
             if out.exists():
                 jobs[job_id].update({"status": "done", "output": out,
@@ -309,6 +323,95 @@ async def download_clip(job_id: str, clip_idx: int):
     return FileResponse(path=out, filename=f"{safe_title}.mp4", media_type="video/mp4")
 
 
+# ── Transcripción de Audio/Vídeo ──────────────────────────────────────────────
+
+@app.post("/upload-transcribe")
+async def upload_transcribe(
+    file: UploadFile = File(...),
+    whisper_model: str = Form("medium"),
+    language: str = Form(DEFAULT_LANGUAGE),
+):
+    job_id = str(uuid.uuid4())[:8]
+    INPUT_DIR.mkdir(parents=True, exist_ok=True)
+    media_path = INPUT_DIR / file.filename
+    with open(media_path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    q = queue.Queue()
+    trans_jobs[job_id] = {
+        "queue": q, "status": "processing", "result": None,
+        "filename": file.filename, "cancelled": False,
+    }
+
+    def run():
+        try:
+            result = transcribe_to_files(media_path, language, whisper_model, progress_q=q)
+            trans_jobs[job_id]["status"] = "done"
+            trans_jobs[job_id]["result"] = result
+        except Exception as e:
+            if trans_jobs[job_id]["status"] != "error":
+                trans_jobs[job_id]["status"] = "error"
+                q.put(f"ERROR:{e}")
+
+    threading.Thread(target=run, daemon=True).start()
+    return {"job_id": job_id, "filename": file.filename}
+
+
+@app.get("/progress-transcribe/{job_id}")
+async def progress_transcribe(job_id: str):
+    if job_id not in trans_jobs:
+        raise HTTPException(status_code=404, detail="Job no encontrado")
+
+    def stream():
+        q = trans_jobs[job_id]["queue"]
+        while True:
+            if trans_jobs[job_id].get("cancelled"):
+                yield "data: CANCELLED\n\n"
+                break
+            try:
+                msg = q.get(timeout=1)
+                yield f"data: {msg}\n\n"
+                if msg.startswith("TDONE") or msg.startswith("ERROR") or msg == "CANCELLED":
+                    break
+            except queue.Empty:
+                if trans_jobs[job_id].get("cancelled"):
+                    yield "data: CANCELLED\n\n"
+                    break
+                yield "data: KEEPALIVE\n\n"
+
+    return StreamingResponse(stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.get("/transcribe-result/{job_id}")
+async def transcribe_result(job_id: str):
+    job = trans_jobs.get(job_id)
+    if not job or job["status"] != "done":
+        raise HTTPException(status_code=404, detail="Transcripción no disponible")
+    res = job["result"]
+    return JSONResponse({
+        "preview":   res["preview"],
+        "full_text": res["full_text"],
+        "segments":  res["segments"],
+        "duration":  res["duration"],
+        "filename":  job["filename"],
+    })
+
+
+@app.get("/download-transcribe/{job_id}/{fmt}")
+async def download_transcribe(job_id: str, fmt: str):
+    job = trans_jobs.get(job_id)
+    if not job or job["status"] != "done":
+        raise HTTPException(status_code=400, detail="Transcripción no lista")
+    if fmt not in ("srt", "txt"):
+        raise HTTPException(status_code=400, detail="Formato inválido")
+    out: Path = job["result"][fmt]
+    if not Path(out).exists():
+        raise HTTPException(status_code=404, detail="Archivo no encontrado")
+    media = "application/x-subrip" if fmt == "srt" else "text/plain"
+    return FileResponse(path=str(out), filename=out.name, media_type=media)
+
+
 # ── Trim (post-render editor) ─────────────────────────────────────────────────
 
 @app.post("/trim/{job_id}")
@@ -381,6 +484,9 @@ async def job_info(job_id: str):
         "highlight_color":job.get("highlight_color","#FFE033"),
         "caption_font":   job.get("caption_font",   "outfit"),
         "orientation":    job.get("orientation",    "vertical"),
+        "caption_case":   job.get("caption_case",   "lower"),
+        "caption_size":   job.get("caption_size",   100),
+        "caption_stroke": job.get("caption_stroke", False),
     })
 
 
@@ -436,6 +542,9 @@ async def re_render(job_id: str, request: Request):
                 caption_pos=new_caption_pos,
                 caption_font=job.get("caption_font", "outfit"),
                 caption_anim=job.get("caption_anim", "default"),
+                caption_case=job.get("caption_case", "lower"),
+                caption_size=job.get("caption_size", 100),
+                caption_stroke=job.get("caption_stroke", False),
                 reuse_captions=True,
             )
             out = OUTPUT_DIR / f"{Path(video_path).stem}-captions.mp4"
@@ -497,6 +606,10 @@ async def cancel_job(job_id: str):
         clip_jobs[job_id]["cancelled"] = True
         clip_jobs[job_id]["status"] = "cancelled"
         return {"ok": True}
+    if job_id in trans_jobs:
+        trans_jobs[job_id]["cancelled"] = True
+        trans_jobs[job_id]["status"] = "cancelled"
+        return {"ok": True}
     return {"ok": False, "detail": "Job no encontrado"}
 
 
@@ -530,6 +643,93 @@ async def delete_groq_key():
     os.environ.pop("GROQ_API_KEY", None)
     _save_config(cfg)
     return JSONResponse({"ok": True})
+
+
+# ── Audio Sync ───────────────────────────────────────────────────────────────
+
+@app.post("/upload-sync")
+async def upload_sync(
+    video: UploadFile = File(...),
+    audio: UploadFile = File(...),
+):
+    """Recibe video de cámara + grabación OBS. Detecta desfase y devuelve video sincronizado."""
+    job_id = str(uuid.uuid4())[:8]
+    INPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Guardar archivos con prefijo para evitar colisiones
+    video_path = INPUT_DIR / f"sync_{job_id}_cam{Path(video.filename).suffix}"
+    audio_path = INPUT_DIR / f"sync_{job_id}_obs{Path(audio.filename).suffix}"
+
+    with open(video_path, "wb") as f:
+        shutil.copyfileobj(video.file, f)
+    with open(audio_path, "wb") as f:
+        shutil.copyfileobj(audio.file, f)
+
+    q = queue.Queue()
+    sync_jobs[job_id] = {
+        "queue": q, "status": "processing", "output": None,
+        "offset": None, "cancelled": False,
+        "video_filename": video.filename,
+    }
+
+    def run():
+        try:
+            out = OUTPUT_DIR / f"sync_{job_id}_{Path(video.filename).stem}-synced.mp4"
+            OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+            offset = sync_audio_tracks(video_path, audio_path, out, progress_q=q)
+            if out.exists():
+                sync_jobs[job_id].update({"status": "done", "output": out, "offset": offset})
+                q.put(f"DONE:{out.stat().st_size / 1024 / 1024:.1f}MB")
+            else:
+                sync_jobs[job_id]["status"] = "error"
+                q.put("ERROR:No se generó el archivo sincronizado")
+        except Exception as e:
+            sync_jobs[job_id]["status"] = "error"
+            q.put(f"ERROR:{e}")
+        finally:
+            # Limpiar archivos temporales de entrada
+            try: video_path.unlink(missing_ok=True)
+            except: pass
+            try: audio_path.unlink(missing_ok=True)
+            except: pass
+
+    threading.Thread(target=run, daemon=True).start()
+    return {"job_id": job_id}
+
+
+@app.get("/progress-sync/{job_id}")
+async def progress_sync(job_id: str):
+    if job_id not in sync_jobs:
+        raise HTTPException(status_code=404, detail="Sync job no encontrado")
+
+    def stream():
+        q = sync_jobs[job_id]["queue"]
+        while True:
+            if sync_jobs[job_id].get("cancelled"):
+                yield "data: CANCELLED\n\n"
+                break
+            try:
+                msg = q.get(timeout=1)
+                yield f"data: {msg}\n\n"
+                if msg.startswith("DONE") or msg.startswith("ERROR") or msg == "CANCELLED":
+                    break
+            except queue.Empty:
+                if sync_jobs[job_id].get("cancelled"):
+                    yield "data: CANCELLED\n\n"
+                    break
+                yield "data: KEEPALIVE\n\n"
+
+    return StreamingResponse(stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.get("/download-sync/{job_id}")
+async def download_sync(job_id: str):
+    job = sync_jobs.get(job_id)
+    if not job or job["status"] != "done":
+        raise HTTPException(status_code=400, detail="Video no listo")
+    out: Path = job["output"]
+    return FileResponse(path=out, filename=out.name, media_type="video/mp4")
 
 
 # ── Arranque ─────────────────────────────────────────────────────────────────
