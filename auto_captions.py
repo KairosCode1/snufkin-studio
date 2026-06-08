@@ -2536,11 +2536,30 @@ def find_audio_offset(video_path: Path, audio_path: Path) -> tuple:
     return offset, confidence
 
 
+def _obs_has_video(obs_path: Path) -> bool:
+    """Devuelve True si el archivo OBS contiene una pista de vídeo."""
+    try:
+        result = subprocess.run(
+            [FFPROBE_EXE, "-v", "quiet", "-select_streams", "v:0",
+             "-show_entries", "stream=codec_type", "-of", "csv=p=0", str(obs_path)],
+            capture_output=True, text=True, timeout=15
+        )
+        return result.stdout.strip() == "video"
+    except Exception:
+        return False
+
+
 def sync_audio_tracks(video_path: Path, obs_path: Path, output_path: Path,
-                      progress_q=None) -> float:
+                      progress_q=None):
     """
-    Sincroniza el audio de OBS con el video de cámara y los combina.
-    Retorna el offset detectado (en segundos).
+    Sincroniza el audio de OBS con el vídeo de cámara y los combina.
+
+    Genera hasta DOS salidas:
+      - output_path         → vídeo de CÁMARA + audio OBS sincronizado
+      - output_path (obs)   → vídeo de PANTALLA (OBS) + audio OBS  (solo si OBS tiene vídeo)
+
+    Retorna (offset_float, has_obs_video: bool).
+    La ruta del segundo archivo es output_path con sufijo _obs antes del .mp4.
     """
     _emit(progress_q, "SYNC_STEP:1:Analizando audio...")
 
@@ -2551,15 +2570,14 @@ def sync_audio_tracks(video_path: Path, obs_path: Path, output_path: Path,
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Construir comando ffmpeg según el signo del offset
+    # ── Construir offset ffmpeg ──────────────────────────────────────────────
     if offset >= 0:
-        # OBS empezó después → retrasamos el audio OBS
         audio_input = ["-itsoffset", f"{offset:.3f}", "-i", str(obs_path)]
     else:
-        # OBS empezó antes → recortamos el principio del audio OBS
         audio_input = ["-ss", f"{-offset:.3f}", "-i", str(obs_path)]
 
-    cmd = [
+    # ── Salida A: cámara + audio OBS ────────────────────────────────────────
+    cmd_cam = [
         FFMPEG_EXE, "-y",
         "-i", str(video_path),
         *audio_input,
@@ -2569,13 +2587,35 @@ def sync_audio_tracks(video_path: Path, obs_path: Path, output_path: Path,
         "-c:a", "aac", "-b:a", "192k",
         str(output_path)
     ]
-
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd_cam, capture_output=True, text=True)
     if result.returncode != 0:
-        raise RuntimeError(f"ffmpeg sync error: {result.stderr[-600:]}")
+        raise RuntimeError(f"ffmpeg sync (cam) error: {result.stderr[-600:]}")
 
+    # ── Salida B: pantalla OBS + audio OBS (solo si OBS tiene vídeo) ────────
+    has_obs_video = _obs_has_video(obs_path)
+    if has_obs_video:
+        stem = output_path.stem          # ej. "sync_abc_cam-synced"
+        obs_out = output_path.with_name(stem.replace("_cam-synced", "_obs-synced") + ".mp4")
+
+        # El vídeo OBS ya tiene su audio en sync consigo mismo — solo remuxear.
+        # Si el offset es grande se puede querer alinear el inicio, pero para
+        # el caso normal (misma grabación) basta con copiar los streams.
+        cmd_obs = [
+            FFMPEG_EXE, "-y",
+            "-i", str(obs_path),
+            "-c:v", "copy",
+            "-c:a", "aac", "-b:a", "192k",
+            str(obs_out)
+        ]
+        res_obs = subprocess.run(cmd_obs, capture_output=True, text=True)
+        if res_obs.returncode != 0:
+            # No es fatal — solo advertimos
+            log.warning(f"ffmpeg obs remux warning: {res_obs.stderr[-300:]}")
+            has_obs_video = False
+
+    _emit(progress_q, f"SYNC_HAS_OBS_VIDEO:{'1' if has_obs_video else '0'}")
     _emit(progress_q, "SYNC_STEP:3:Listo")
-    return offset
+    return offset, has_obs_video
 
 
 # ── Watchdog ─────────────────────────────────────────────────────────────────────

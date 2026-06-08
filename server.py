@@ -667,19 +667,33 @@ async def upload_sync(
 
     q = queue.Queue()
     sync_jobs[job_id] = {
-        "queue": q, "status": "processing", "output": None,
-        "offset": None, "cancelled": False,
+        "queue": q, "status": "processing",
+        "output_cam": None, "output_obs": None,
+        "offset": None, "has_obs_video": False,
+        "cancelled": False,
         "video_filename": video.filename,
     }
 
     def run():
         try:
-            out = OUTPUT_DIR / f"sync_{job_id}_{Path(video.filename).stem}-synced.mp4"
+            out_cam = OUTPUT_DIR / f"sync_{job_id}_{Path(video.filename).stem}_cam-synced.mp4"
             OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-            offset = sync_audio_tracks(video_path, audio_path, out, progress_q=q)
-            if out.exists():
-                sync_jobs[job_id].update({"status": "done", "output": out, "offset": offset})
-                q.put(f"DONE:{out.stat().st_size / 1024 / 1024:.1f}MB")
+            offset, has_obs_video = sync_audio_tracks(video_path, audio_path, out_cam, progress_q=q)
+            out_obs = None
+            if has_obs_video:
+                out_obs = OUTPUT_DIR / f"sync_{job_id}_{Path(video.filename).stem}_obs-synced.mp4"
+                if not out_obs.exists():
+                    out_obs = None
+                    has_obs_video = False
+            if out_cam.exists():
+                sync_jobs[job_id].update({
+                    "status": "done",
+                    "output_cam": out_cam,
+                    "output_obs": out_obs,
+                    "offset": offset,
+                    "has_obs_video": has_obs_video,
+                })
+                q.put(f"DONE:{out_cam.stat().st_size / 1024 / 1024:.1f}MB")
             else:
                 sync_jobs[job_id]["status"] = "error"
                 q.put("ERROR:No se generó el archivo sincronizado")
@@ -687,7 +701,6 @@ async def upload_sync(
             sync_jobs[job_id]["status"] = "error"
             q.put(f"ERROR:{e}")
         finally:
-            # Limpiar archivos temporales de entrada
             try: video_path.unlink(missing_ok=True)
             except: pass
             try: audio_path.unlink(missing_ok=True)
@@ -724,11 +737,24 @@ async def progress_sync(job_id: str):
 
 
 @app.get("/download-sync/{job_id}")
-async def download_sync(job_id: str):
+async def download_sync(job_id: str, variant: str = "cam"):
+    """
+    variant=cam  → vídeo cámara + audio OBS (por defecto)
+    variant=obs  → vídeo pantalla OBS + audio OBS
+    """
     job = sync_jobs.get(job_id)
     if not job or job["status"] != "done":
         raise HTTPException(status_code=400, detail="Video no listo")
-    out: Path = job["output"]
+
+    if variant == "obs":
+        out: Path = job.get("output_obs")
+        if not out or not out.exists():
+            raise HTTPException(status_code=404, detail="Vídeo OBS no disponible")
+    else:
+        out: Path = job.get("output_cam") or job.get("output")  # compat. retrocompatibilidad
+        if not out or not out.exists():
+            raise HTTPException(status_code=404, detail="Vídeo no encontrado")
+
     return FileResponse(path=out, filename=out.name, media_type="video/mp4")
 
 

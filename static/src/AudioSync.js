@@ -41,17 +41,18 @@
 function AudioSync({ onBack }) {
   const { useState, useRef, useCallback, useEffect } = React;
 
-  const [camFile,   setCamFile]   = useState(null);
-  const [obsFile,   setObsFile]   = useState(null);
-  const [phase,     setPhase]     = useState("idle");   // idle | processing | done | error
-  const [stepLabel, setStepLabel] = useState("");
-  const [bar,       setBar]       = useState(0);
-  const [offset,    setOffset]    = useState(null);     // segundos
-  const [confidence,setConf]      = useState(null);
-  const [jobId,     setJobId]     = useState(null);
-  const [error,     setError]     = useState("");
-  const [camDrag,   setCamDrag]   = useState(false);
-  const [obsDrag,   setObsDrag]   = useState(false);
+  const [camFile,      setCamFile]      = useState(null);
+  const [obsFile,      setObsFile]      = useState(null);
+  const [phase,        setPhase]        = useState("idle");   // idle | processing | done | error
+  const [stepLabel,    setStepLabel]    = useState("");
+  const [bar,          setBar]          = useState(0);
+  const [offset,       setOffset]       = useState(null);     // segundos
+  const [confidence,   setConf]         = useState(null);
+  const [jobId,        setJobId]        = useState(null);
+  const [error,        setError]        = useState("");
+  const [camDrag,      setCamDrag]      = useState(false);
+  const [obsDrag,      setObsDrag]      = useState(false);
+  const [hasObsVideo,  setHasObsVideo]  = useState(false);    // OBS tenía pista de vídeo
 
   const esRef = useRef(null);
 
@@ -100,6 +101,11 @@ function AudioSync({ onBack }) {
         return;
       }
 
+      if (msg.startsWith("SYNC_HAS_OBS_VIDEO:")) {
+        setHasObsVideo(msg.endsWith(":1"));
+        return;
+      }
+
       if (msg.startsWith("DONE")) {
         es.close(); esRef.current = null;
         setBar(100);
@@ -125,7 +131,7 @@ function AudioSync({ onBack }) {
     if (esRef.current) { esRef.current.close(); esRef.current = null; }
     setCamFile(null); setObsFile(null); setPhase("idle");
     setBar(0); setStepLabel(""); setOffset(null); setConf(null);
-    setJobId(null); setError("");
+    setJobId(null); setError(""); setHasObsVideo(false);
   };
 
   // ── helpers ──
@@ -226,14 +232,14 @@ function AudioSync({ onBack }) {
               file={obsFile} onFile={setObsFile}
               drag={obsDrag} onDrag={setObsDrag}
               accept="video/*,audio/*"
-              label="Audio OBS"
-              icon="🎙"
+              label="Grabación OBS"
+              icon="🖥️"
             />
           </div>
 
           {/* Info pill */}
           <div style={{ fontSize: 11, color: "rgba(255,255,255,0.28)", fontFamily: "'Inter',sans-serif", textAlign: "center", marginBottom: 20, lineHeight: 1.5 }}>
-            El audio de OBS reemplaza el audio de la cámara en el video final.
+            Si la grabación OBS es un vídeo, podrás descargar ambas versiones con el audio bueno.
           </div>
 
           {/* Botón */}
@@ -347,7 +353,9 @@ function AudioSync({ onBack }) {
               Audio sincronizado
             </div>
             <div style={{ fontSize: 12, color: "rgba(255,255,255,0.40)", fontFamily: "'Inter',sans-serif" }}>
-              El video incluye el audio de OBS sincronizado con la cámara.
+              {hasObsVideo
+                ? "Elige qué vídeo quieres — ambos llevan el audio de OBS sincronizado."
+                : "El vídeo incluye el audio de OBS sincronizado con la cámara."}
             </div>
           </div>
 
@@ -368,26 +376,63 @@ function AudioSync({ onBack }) {
             </div>
           )}
 
-          {/* Descargar */}
-          <a
-            href={`/download-sync/${jobId}`}
-            download
-            style={{
-              display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-              width: "100%", padding: "14px 0", borderRadius: "0.75rem",
-              background: "linear-gradient(135deg,#5E6AD2,#6872D9)",
-              color: "#fff", textDecoration: "none",
-              fontFamily: "'Outfit',sans-serif", fontWeight: 700, fontSize: 14,
-              letterSpacing: "0.05em", textTransform: "uppercase",
-              boxShadow: "0 4px 20px rgba(94,106,210,0.35)",
-              transition: "opacity 0.15s", marginBottom: 12,
-            }}
-            onMouseEnter={e => e.currentTarget.style.opacity = "0.88"}
-            onMouseLeave={e => e.currentTarget.style.opacity = "1"}
-          >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2v8M4 7l4 4 4-4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/><path d="M2 13h12" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/></svg>
-            Descargar video
-          </a>
+          {/* ── Botones de descarga ── */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 12 }}>
+
+            {/* Opción A: Cámara + audio OBS */}
+            <div>
+              <div style={{ fontSize: 10, letterSpacing: "0.12em", color: "rgba(255,255,255,0.30)", fontFamily: "'Outfit',sans-serif", textTransform: "uppercase", marginBottom: 5, paddingLeft: 2 }}>
+                {hasObsVideo ? "Opción A — Cámara" : "Descargar"}
+              </div>
+              <a
+                href={`/download-sync/${jobId}?variant=cam`}
+                download
+                style={{
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                  width: "100%", padding: "13px 0", borderRadius: "0.75rem",
+                  background: "linear-gradient(135deg,#5E6AD2,#6872D9)",
+                  color: "#fff", textDecoration: "none",
+                  fontFamily: "'Outfit',sans-serif", fontWeight: 700, fontSize: 13,
+                  letterSpacing: "0.05em", textTransform: "uppercase",
+                  boxShadow: "0 4px 20px rgba(94,106,210,0.30)",
+                  transition: "opacity 0.15s",
+                }}
+                onMouseEnter={e => e.currentTarget.style.opacity = "0.88"}
+                onMouseLeave={e => e.currentTarget.style.opacity = "1"}
+              >
+                <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M8 2v8M4 7l4 4 4-4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/><path d="M2 13h12" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/></svg>
+                🎥 {hasObsVideo ? "Cámara + audio OBS" : "Descargar video"}
+              </a>
+            </div>
+
+            {/* Opción B: Pantalla OBS + audio OBS (solo si OBS tenía vídeo) */}
+            {hasObsVideo && (
+              <div>
+                <div style={{ fontSize: 10, letterSpacing: "0.12em", color: "rgba(255,255,255,0.30)", fontFamily: "'Outfit',sans-serif", textTransform: "uppercase", marginBottom: 5, paddingLeft: 2 }}>
+                  Opción B — Pantalla
+                </div>
+                <a
+                  href={`/download-sync/${jobId}?variant=obs`}
+                  download
+                  style={{
+                    display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                    width: "100%", padding: "13px 0", borderRadius: "0.75rem",
+                    background: "rgba(255,255,255,0.06)",
+                    border: "1px solid rgba(255,255,255,0.12)",
+                    color: "rgba(255,255,255,0.85)", textDecoration: "none",
+                    fontFamily: "'Outfit',sans-serif", fontWeight: 700, fontSize: 13,
+                    letterSpacing: "0.05em", textTransform: "uppercase",
+                    transition: "all 0.15s",
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.background = "rgba(255,255,255,0.10)"; e.currentTarget.style.borderColor = "rgba(255,255,255,0.20)"; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = "rgba(255,255,255,0.06)"; e.currentTarget.style.borderColor = "rgba(255,255,255,0.12)"; }}
+                >
+                  <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M8 2v8M4 7l4 4 4-4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/><path d="M2 13h12" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/></svg>
+                  🖥️ Pantalla OBS + audio OBS
+                </a>
+              </div>
+            )}
+          </div>
 
           <button
             onClick={reset}
