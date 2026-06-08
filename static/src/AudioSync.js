@@ -417,15 +417,15 @@ function AudioSync({ onBack }) {
                   style={{
                     display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
                     width: "100%", padding: "13px 0", borderRadius: "0.75rem",
-                    background: "rgba(255,255,255,0.06)",
-                    border: "1px solid rgba(255,255,255,0.12)",
-                    color: "rgba(255,255,255,0.85)", textDecoration: "none",
+                    background: "linear-gradient(135deg,#5E6AD2,#6872D9)",
+                    color: "#fff", textDecoration: "none",
                     fontFamily: "'Outfit',sans-serif", fontWeight: 700, fontSize: 13,
                     letterSpacing: "0.05em", textTransform: "uppercase",
-                    transition: "all 0.15s",
+                    boxShadow: "0 4px 20px rgba(94,106,210,0.30)",
+                    transition: "opacity 0.15s",
                   }}
-                  onMouseEnter={e => { e.currentTarget.style.background = "rgba(255,255,255,0.10)"; e.currentTarget.style.borderColor = "rgba(255,255,255,0.20)"; }}
-                  onMouseLeave={e => { e.currentTarget.style.background = "rgba(255,255,255,0.06)"; e.currentTarget.style.borderColor = "rgba(255,255,255,0.12)"; }}
+                  onMouseEnter={e => e.currentTarget.style.opacity = "0.88"}
+                  onMouseLeave={e => e.currentTarget.style.opacity = "1"}
                 >
                   <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M8 2v8M4 7l4 4 4-4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/><path d="M2 13h12" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/></svg>
                   🖥️ Pantalla OBS + audio OBS
