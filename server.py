@@ -122,7 +122,11 @@ async def upload(
 ):
     job_id = str(uuid.uuid4())[:8]
     INPUT_DIR.mkdir(parents=True, exist_ok=True)
-    video_path = INPUT_DIR / file.filename
+    # Sanitizar nombre: quitar espacios al inicio/fin del stem (ej. "REEL 1 .mp4" → "REEL 1.mp4")
+    _raw = file.filename or "video.mp4"
+    _stem = Path(_raw).stem.strip()
+    _ext  = Path(_raw).suffix or ".mp4"
+    video_path = INPUT_DIR / (_stem + _ext)
     with open(video_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
 
@@ -132,7 +136,7 @@ async def upload(
     _stroke = caption_stroke.lower() == "true"
     jobs[job_id] = {
         "queue": q, "status": "processing", "output": None,
-        "filename": file.filename, "cancelled": False,
+        "filename": _stem + _ext, "cancelled": False,
         # Store render params for potential re-render
         "caption_style": caption_style, "orientation": orientation,
         "whisper_model": whisper_model, "highlight_color": highlight_color,
@@ -250,12 +254,16 @@ async def upload_clips(
 ):
     job_id = str(uuid.uuid4())[:8]
     INPUT_DIR.mkdir(parents=True, exist_ok=True)
-    video_path = INPUT_DIR / file.filename
+    # Sanitizar nombre: quitar espacios al inicio/fin del stem (ej. "REEL 1 .mp4" → "REEL 1.mp4")
+    _raw = file.filename or "video.mp4"
+    _stem = Path(_raw).stem.strip()
+    _ext  = Path(_raw).suffix or ".mp4"
+    video_path = INPUT_DIR / (_stem + _ext)
     with open(video_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
 
     q = queue.Queue()
-    clip_jobs[job_id] = {"queue": q, "status": "processing", "clips": [], "filename": file.filename, "cancelled": False}
+    clip_jobs[job_id] = {"queue": q, "status": "processing", "clips": [], "filename": _stem + _ext, "cancelled": False}
 
     def run():
         try:
