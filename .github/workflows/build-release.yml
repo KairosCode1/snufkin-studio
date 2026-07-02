@@ -1,0 +1,52 @@
+name: Build & Publish Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install pyinstaller fastapi uvicorn "faster-whisper>=1.0.0" groq watchdog aiofiles python-multipart
+
+      - name: Download FFmpeg + Node portable
+        shell: cmd
+        run: build\download_tools.bat
+
+      - name: Build server.exe (PyInstaller)
+        run: |
+          python -m PyInstaller build/build_backend.spec `
+            --distpath dist/server `
+            --workpath build/pyinstaller_work `
+            --noconfirm
+
+      - name: Install npm dependencies
+        run: npm install
+
+      - name: Build installer & publish GitHub Release
+        run: npm run release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
