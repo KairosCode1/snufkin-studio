@@ -35,6 +35,7 @@ _WORKSPACE   = Path(os.environ.get("APP_WORKSPACE", str(BASE_DIR)))
 INPUT_DIR    = _WORKSPACE / "input"
 OUTPUT_DIR   = _WORKSPACE / "output"
 PROJECTS_DIR = _WORKSPACE / "projects"
+MODELS_DIR   = _WORKSPACE / "models"   # cache persistente y escribible del modelo Whisper
 
 DEFAULT_LANGUAGE = "es"
 DEFAULT_MODEL    = "medium"
@@ -1150,6 +1151,90 @@ def _emit(progress_q, msg: str):
         progress_q.put(msg)
 
 
+# ── Carga robusta del modelo Whisper ──────────────────────────────────────────
+# El modelo NO viene empaquetado: faster-whisper lo descarga de HuggingFace la
+# primera vez (medium ≈ 1.5 GB). En redes lentas/inestables esa descarga fallaba
+# y la transcripción abortaba con "No se pudo cargar Whisper". Este helper:
+#   1. Reutiliza la copia local si ya existe (rápido y offline).
+#   2. Guarda el modelo en un dir persistente y escribible del workspace.
+#   3. Reintenta la descarga varias veces.
+#   4. Si el modelo pedido no se consigue, prueba con uno más ligero.
+#   5. Traduce el error técnico a un mensaje claro para el usuario.
+def _fallback_chain(model: str) -> list:
+    """Modelo pedido + modelos progresivamente más ligeros como respaldo."""
+    order = ["large-v3", "medium", "small", "base", "tiny"]
+    if model in order:
+        return [model] + order[order.index(model) + 1:]
+    return [model, "small", "base", "tiny"]
+
+
+def _friendly_whisper_error(exc: Exception) -> str:
+    m = str(exc).lower()
+    if any(k in m for k in ("connection", "timeout", "timed out", "max retries",
+                            "temporarily", "resolve", "network", "ssl", "getaddrinfo",
+                            "read timed out", "httpsconnection", "connectionerror")):
+        return ("No se pudo descargar el modelo de subtítulos. Revisa tu conexión a "
+                "internet (o un firewall/antivirus que bloquee la descarga) y vuelve a "
+                "intentarlo — el modelo solo se descarga la primera vez.")
+    if any(k in m for k in ("no space", "espacio", "disk full", "errno 28")):
+        return ("No hay suficiente espacio en disco para el modelo de subtítulos "
+                "(necesita ~1.5 GB libres). Libera espacio y reintenta.")
+    if any(k in m for k in ("dll", "illegal instruction", "avx", "0xc000001d")):
+        return ("Este equipo no puede ejecutar el motor de transcripción (faltan "
+                "instrucciones de CPU o una librería del sistema). Contacta con soporte.")
+    return f"No se pudo cargar el modelo de subtítulos: {exc}"
+
+
+def _load_whisper_model(model: str, progress_q=None):
+    """Carga WhisperModel de forma robusta: caché local, reintentos y fallback.
+    Devuelve (whisper_model, nombre_real_usado). Lanza excepción con mensaje
+    claro si no se consigue ningún modelo."""
+    from faster_whisper import WhisperModel
+
+    MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    # Descargas más tolerantes en redes lentas.
+    os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+    os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "60")
+
+    def _try(name, local_only, root):
+        kw = dict(device="cpu", compute_type="int8", local_files_only=local_only)
+        if root:
+            kw["download_root"] = str(root)
+        return WhisperModel(name, **kw)
+
+    # 1) Offline rápido: caché por defecto (usuarios que ya lo tenían funcionando).
+    try:
+        return _try(model, True, None), model
+    except Exception:
+        pass
+    # 2) Offline: caché del workspace (descargas previas de esta app).
+    try:
+        return _try(model, True, MODELS_DIR), model
+    except Exception:
+        pass
+
+    # 3) Descargar al workspace, con reintentos y fallback a modelos más ligeros.
+    last_exc = None
+    for name in _fallback_chain(model):
+        _emit(progress_q, f"Descargando modelo de subtítulos '{name}' (solo la primera vez)...")
+        for attempt in range(1, 4):
+            try:
+                wm = _try(name, False, MODELS_DIR)
+                if name != model:
+                    _emit(progress_q, f"Usando modelo '{name}' (el modelo '{model}' no se pudo descargar).")
+                return wm, name
+            except Exception as e:
+                last_exc = e
+                log.error(f"  Fallo cargando modelo '{name}' (intento {attempt}/3): {e}")
+                if attempt < 3:
+                    _emit(progress_q, f"Reintentando descarga del modelo '{name}' ({attempt}/3)...")
+                    time.sleep(2 * attempt)
+        _emit(progress_q, f"No se pudo obtener el modelo '{name}', probando uno más ligero...")
+
+    raise RuntimeError(_friendly_whisper_error(last_exc)
+                       if last_exc else "No se pudo cargar ningún modelo de Whisper")
+
+
 def _render_html_to_video(project_dir: Path, output_file: Path, progress_q=None) -> bool:
     """Runs the hyperframes render step. project_dir must contain index.html.
     Returns True on success, False on failure (after emitting ERROR to queue)."""
@@ -1354,10 +1439,9 @@ def transcribe_to_files(video_path: Path, language: str, model: str, progress_q=
     # 1. Cargar modelo
     _emit(progress_q, "TSTEP:1:Cargando modelo Whisper...")
     try:
-        from faster_whisper import WhisperModel
-        whisper_model = WhisperModel(model, device="cpu", compute_type="int8")
+        whisper_model, model = _load_whisper_model(model, progress_q)
     except Exception as e:
-        _emit(progress_q, f"ERROR:No se pudo cargar Whisper: {e}")
+        _emit(progress_q, f"ERROR:{e}")
         raise
 
     # 2. Transcribir
@@ -1526,9 +1610,8 @@ def process_video(video_path: Path, language: str, model: str, progress_q=None,
     _emit(progress_q, "STEP:2:Transcribiendo audio con Whisper...")
     transcript_path = project_dir / "transcript.json"
     try:
-        from faster_whisper import WhisperModel
         _emit(progress_q, f"STEP:2:Cargando modelo Whisper '{model}'...")
-        whisper_model = WhisperModel(model, device="cpu", compute_type="int8")
+        whisper_model, model = _load_whisper_model(model, progress_q)
         _emit(progress_q, "STEP:2:Transcribiendo audio...")
         segments, audio_info = whisper_model.transcribe(  # audio_info.duration = duracion real
             str(dest_video),
@@ -2228,8 +2311,7 @@ def process_long_video(video_path: Path, language: str, model: str, progress_q=N
     # ── 1. Transcribir video completo ──
     _emit(progress_q, "CSTEP:2")
     try:
-        from faster_whisper import WhisperModel
-        wmodel = WhisperModel(model, device="cpu", compute_type="int8")
+        wmodel, model = _load_whisper_model(model, progress_q)
         segments, audio_info = wmodel.transcribe(
             str(dest_video), language=language,
             word_timestamps=True, vad_filter=False,
