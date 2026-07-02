@@ -16,6 +16,28 @@ import argparse
 import threading
 import subprocess
 from pathlib import Path
+
+# ── Silenciar ventanas de consola en Windows ─────────────────────────────────
+# Todos los subprocesos (ffmpeg, ffprobe, node, where…) deben lanzarse sin
+# ventana visible. Monkey-patch global: evita tener que recordarlo en cada
+# subprocess.run / Popen individual.
+if os.name == "nt":
+    _orig_run   = subprocess.run
+    _orig_popen = subprocess.Popen
+    _NO_WINDOW  = subprocess.CREATE_NO_WINDOW
+
+    def _run_no_window(*args, **kwargs):
+        kwargs.setdefault("creationflags", 0)
+        kwargs["creationflags"] |= _NO_WINDOW
+        return _orig_run(*args, **kwargs)
+
+    def _popen_no_window(*args, **kwargs):
+        kwargs.setdefault("creationflags", 0)
+        kwargs["creationflags"] |= _NO_WINDOW
+        return _orig_popen(*args, **kwargs)
+
+    subprocess.run   = _run_no_window    # type: ignore[assignment]
+    subprocess.Popen = _popen_no_window  # type: ignore[assignment]
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 # faster_whisper y groq se importan de forma lazy (solo al procesar el primer video)
@@ -87,6 +109,74 @@ def _load_gsap_inline() -> str:
     # Fallback: CDN (mejor que nada, pero arriesgado sin red en el render).
     _GSAP_INLINE_CACHE = '<script src="https://cdn.jsdelivr.net/npm/gsap@3/dist/gsap.min.js"></script>'
     return _GSAP_INLINE_CACHE
+
+
+_FONTS_INLINE_CACHE = None
+def _load_fonts_inline() -> str:
+    """Carga las fuentes necesarias como @font-face con data-URI (base64) para
+    que el render headless (sin red) las tenga disponibles tal cual."""
+    global _FONTS_INLINE_CACHE
+    if _FONTS_INLINE_CACHE is not None:
+        return _FONTS_INLINE_CACHE
+
+    # Localizar la carpeta vendor/fonts igual que _load_gsap_inline
+    _npx = os.environ.get("NPX_CMD", "")
+    base_candidates = [
+        BASE_DIR / "resources" / "vendor" / "fonts",
+        BASE_DIR.parent / "vendor" / "fonts",
+        BASE_DIR / "vendor" / "fonts",
+        Path(__file__).parent / "resources" / "vendor" / "fonts",
+    ]
+    if _npx:
+        try:
+            _tools = Path(_npx).parent.parent
+            base_candidates.append(_tools.parent / "vendor" / "fonts")
+            base_candidates.append(_tools / "vendor" / "fonts")
+        except Exception:
+            pass
+
+    fonts_dir = None
+    for c in base_candidates:
+        if c.is_dir():
+            fonts_dir = c
+            break
+
+    if fonts_dir is None:
+        # Sin fuentes locales → dejar que el navegador use las del sistema (no ideal)
+        _FONTS_INLINE_CACHE = ""
+        return _FONTS_INLINE_CACHE
+
+    import base64
+    # Mapeo archivo → (family, weight, style)
+    font_map = [
+        ("Outfit.woff2",            "Outfit",         "400 900", "normal"),
+        ("Raleway.woff2",           "Raleway",         "300 400", "normal"),
+        ("Raleway-Bold.woff2",      "Raleway",         "700",     "normal"),
+        ("Inter-Bold.woff2",        "Inter",           "700",     "normal"),
+        ("DancingScript-Bold.woff2","Dancing Script",  "700",     "normal"),
+    ]
+
+    css_blocks = []
+    for fname, family, weight, style in font_map:
+        fpath = fonts_dir / fname
+        if not fpath.is_file():
+            continue
+        b64 = base64.b64encode(fpath.read_bytes()).decode("ascii")
+        css_blocks.append(
+            f"@font-face {{\n"
+            f"  font-family: '{family}';\n"
+            f"  font-style: {style};\n"
+            f"  font-weight: {weight};\n"
+            f"  font-display: block;\n"
+            f"  src: url('data:font/woff2;base64,{b64}') format('woff2');\n"
+            f"}}"
+        )
+
+    if css_blocks:
+        _FONTS_INLINE_CACHE = "<style>/* Fuentes embebidas offline para render headless */\n" + "\n".join(css_blocks) + "\n</style>"
+    else:
+        _FONTS_INLINE_CACHE = ""
+    return _FONTS_INLINE_CACHE
 
 
 def _get_groq_key() -> str:
@@ -364,13 +454,13 @@ def _underline_neon_filter(hex_color: str) -> str:
     return f"drop-shadow(0 0 4px {c}) drop-shadow(0 0 10px {c2}) drop-shadow(0 0 22px {c3})"
 
 # ── Glow presets por color de énfasis ────────────────────────────────────────────
-_GLOW_S1 = {   # sombra de color para .style-big en style1
-    "#FFE033": "0 0 50px rgba(255,220,0,0.45)",
-    "#00E5FF": "0 0 50px rgba(0,229,255,0.45)",
-    "#FF3D9A": "0 0 50px rgba(255,61,154,0.45)",
-    "#4ADE80": "0 0 50px rgba(74,222,128,0.45)",
-    "#FF3333": "0 0 50px rgba(255,51,51,0.45)",
-    "#FF8C00": "0 0 50px rgba(255,140,0,0.45)",
+_GLOW_S1 = {   # sombra de color para .style-big en style1 — multi-capa para que sea visible en el render
+    "#FFE033": "0 0 6px #FFE033, 0 0 18px #FFD700, 0 0 40px #FFA500, 0 0 75px rgba(255,140,0,0.55)",
+    "#00E5FF": "0 0 6px #00E5FF, 0 0 18px #00CFFF, 0 0 40px #0090FF, 0 0 75px rgba(0,120,255,0.55)",
+    "#FF3D9A": "0 0 6px #FF3D9A, 0 0 18px #FF1080, 0 0 40px #CC0066, 0 0 75px rgba(200,0,100,0.55)",
+    "#4ADE80": "0 0 6px #4ADE80, 0 0 18px #20C060, 0 0 40px #108040, 0 0 75px rgba(20,160,60,0.55)",
+    "#FF3333": "0 0 6px #FF3333, 0 0 18px #FF0000, 0 0 40px #CC0000, 0 0 75px rgba(200,0,0,0.55)",
+    "#FF8C00": "0 0 6px #FF8C00, 0 0 18px #FF6600, 0 0 40px #CC4400, 0 0 75px rgba(200,80,0,0.55)",
 }
 _GLOW_S2 = {   # glow completo para .s2 .style-big
     "#FFE033": "0 0 5px #FFE033, 0 0 12px #FFD700, 0 0 26px #FFA500, 0 0 52px rgba(255,140,0,0.65), 0 0 90px rgba(255,100,0,0.30)",
@@ -385,7 +475,7 @@ _GLOW_S2 = {   # glow completo para .s2 .style-big
 _FONT_CSS_MAP = {
     "outfit":   ("'Outfit', sans-serif",          "700"),
     "inter":    ("'Inter', sans-serif",            "700"),
-    "raleway":  ("'Raleway', sans-serif",          "300"),
+    "raleway":  ("'Raleway', sans-serif",          "400"),
     "playfair": ("'Playfair Display', serif",      "700"),
 }
 
@@ -928,24 +1018,31 @@ def build_html(video_filename: str, duration: float, groups: list, lang: str = "
     _font_family, _font_weight = _FONT_CSS_MAP.get(caption_font, _FONT_CSS_MAP["outfit"])
     _is_generic_style = style not in ("style_retro", "style_doc", "style_cinematic", "style_sub")
     font_override_css = f"""
-    /* ── Font override ── */
-    #root .caption-word {{
+    /* ── Font override: misma familia en todos los estilos ── */
+    #root .caption-word:not(.style-glow) {{
       font-family: {_font_family} !important;
+    }}
+    /* Palabras normales: peso según el mapa de fuentes */
+    #root .caption-word:not(.style-big):not(.style-glow) {{
       font-weight: {_font_weight} !important;
+    }}
+    /* Énfasis: siempre bold, independiente del peso normal de la fuente */
+    #root .caption-word.style-big {{
+      font-weight: 700 !important;
     }}""" if _is_generic_style and caption_font != "outfit" else ""
 
     # GSAP local embebido — sin esto, gsap no carga en el render headless y los captions se superponen.
     gsap_inline = _load_gsap_inline()
+    # Fuentes embebidas offline — sin esto, el bold/weight no aplica en el render headless (sin CDN).
+    fonts_inline = _load_fonts_inline()
 
     return f"""<!doctype html>
 <html lang="{lang}">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width={vid_w}, height={vid_h}" />
-  <!-- Fonts: load async, never block render if CDN is unreachable -->
-  <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:ital,wght@0,300;0,400;0,700;0,900;1,300;1,400&family=Dancing+Script:wght@700&family=Raleway:wght@300;400&family=Playfair+Display:ital,wght@1,700;1,800;1,900&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+  <!-- Fuentes embebidas offline (base64 woff2) — sin CDN para el render headless -->
+  {fonts_inline}
   <!-- GSAP embebido LOCAL (offline): garantiza que gsap.timeline() existe en el render
        headless aunque no haya red. Sin esto, los captions se superponen. -->
   {gsap_inline}
@@ -1051,9 +1148,8 @@ def build_html(video_filename: str, duration: float, groups: list, lang: str = "
          4px -4px 0 rgba(0,0,0,0.65),
         -4px  4px 0 rgba(0,0,0,0.65),
          4px  4px 0 rgba(0,0,0,0.65),
-        {glow_s1},
-        0 4px 12px rgba(0,0,0,0.99),
-        0 8px 32px rgba(0,0,0,0.85);
+        0 8px 32px rgba(0,0,0,0.85),
+        {glow_s1};
     }}
 
     /* ── UNDERLINE: subrayado neón mismo color que el resaltado ── */
@@ -1135,8 +1231,8 @@ def transcript_to_groups_plain(words, max_words=3):
 def get_video_duration(video_path: Path) -> float:
     try:
         result = subprocess.run(
-            f'"{FFPROBE_EXE}" -v quiet -print_format json -show_format "{video_path}"',
-            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, shell=True
+            [FFPROBE_EXE, "-v", "quiet", "-print_format", "json", "-show_format", str(video_path)],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
         )
         data = json.loads(result.stdout.decode("utf-8", errors="ignore"))
         return float(data["format"]["duration"])
@@ -1290,7 +1386,7 @@ def _render_html_to_video(project_dir: Path, output_file: Path, progress_q=None)
         if found:
             return found
         try:
-            r = subprocess.run("where ffmpeg", shell=True, capture_output=True, text=True, timeout=5)
+            r = subprocess.run(["where", "ffmpeg"], capture_output=True, text=True, timeout=5)
             if r.returncode == 0:
                 first = r.stdout.strip().splitlines()[0].strip()
                 if first and Path(first).is_file():

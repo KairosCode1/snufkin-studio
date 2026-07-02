@@ -14,8 +14,8 @@ a = Analysis(
     binaries=[],
     datas=[
         # Nada de static/ aquí — Electron copia static/ como extraResource
-        # Incluir modelos de Whisper pre-descargados si existen en ~/.cache
-        # (el usuario debe haberlos descargado al menos una vez antes del build)
+        # faster_whisper assets (silero VAD model requerido en runtime)
+        (__import__('faster_whisper').__path__[0] + '/assets', 'faster_whisper/assets'),
     ],
     hiddenimports=[
         # FastAPI / uvicorn
