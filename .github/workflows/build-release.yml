@@ -28,15 +28,46 @@ jobs:
           node-version: '20'
 
       - name: Install Python dependencies
-        run: |
-          pip install --upgrade pip
-          pip install pyinstaller fastapi uvicorn "faster-whisper>=1.0.0" groq watchdog aiofiles python-multipart
+        run: pip install --upgrade pip pyinstaller fastapi uvicorn "faster-whisper>=1.0.0" groq watchdog aiofiles python-multipart
 
-      - name: Download FFmpeg + Node portable
-        shell: cmd
-        run: build\download_tools.bat
+      - name: Download FFmpeg + Node portable for bundling
+        shell: pwsh
+        run: |
+          $toolsDir = "resources\tools"
+          $nodeDir  = "$toolsDir\node"
+          New-Item -ItemType Directory -Force -Path $toolsDir | Out-Null
+          New-Item -ItemType Directory -Force -Path $nodeDir  | Out-Null
+
+          # --- FFmpeg ---
+          Write-Host "Descargando FFmpeg..."
+          $ffUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
+          $ffZip = "$env:TEMP\ffmpeg.zip"
+          Invoke-WebRequest -Uri $ffUrl -OutFile $ffZip -UseBasicParsing
+          Expand-Archive -Path $ffZip -DestinationPath "$env:TEMP\ffmpeg_ext" -Force
+          $ff  = Get-ChildItem -Recurse "$env:TEMP\ffmpeg_ext" -Filter "ffmpeg.exe"  | Select-Object -First 1
+          $ffp = Get-ChildItem -Recurse "$env:TEMP\ffmpeg_ext" -Filter "ffprobe.exe" | Select-Object -First 1
+          Copy-Item $ff.FullName  "$toolsDir\ffmpeg.exe"
+          Copy-Item $ffp.FullName "$toolsDir\ffprobe.exe"
+          Write-Host "FFmpeg OK: $(& "$toolsDir\ffmpeg.exe" -version 2>&1 | Select-Object -First 1)"
+
+          # --- Node.js portable (bundled en la app para el render headless) ---
+          Write-Host "Descargando Node.js portable..."
+          $nodeVer = "20.14.0"
+          $nodeUrl = "https://nodejs.org/dist/v$nodeVer/node-v$nodeVer-win-x64.zip"
+          $nodeZip = "$env:TEMP\node.zip"
+          Invoke-WebRequest -Uri $nodeUrl -OutFile $nodeZip -UseBasicParsing
+          Expand-Archive -Path $nodeZip -DestinationPath "$env:TEMP\node_ext" -Force
+          $nodeFolder = Get-ChildItem "$env:TEMP\node_ext" -Filter "node-v*" | Select-Object -First 1
+          Copy-Item -Recurse "$($nodeFolder.FullName)\*" $nodeDir
+          Write-Host "Node portable OK: $(& "$nodeDir\node.exe" --version)"
+
+          # --- hyperframes (necesario para el render de captions) ---
+          Write-Host "Instalando hyperframes..."
+          & "$nodeDir\npm.cmd" install hyperframes --prefix $nodeDir --no-audit --no-fund --loglevel=warn
+          Write-Host "hyperframes OK"
 
       - name: Build server.exe (PyInstaller)
+        shell: pwsh
         run: |
           python -m PyInstaller build/build_backend.spec `
             --distpath dist/server `
