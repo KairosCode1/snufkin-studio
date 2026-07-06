@@ -1543,13 +1543,19 @@ def transcribe_to_files(video_path: Path, language: str, model: str, progress_q=
     # 2. Transcribir
     _emit(progress_q, "TSTEP:2:Transcribiendo audio...")
     try:
+        # Para audios largos (>10 min) desactivar VAD: calcula STFT de todo el audio a la vez
+        # y consume >1 GB de RAM que equipos con poca memoria no pueden alojar.
+        # Con vad_filter=False + chunk_length=30 procesa de 30s en 30s sin picos de RAM.
+        _pre_dur = get_video_duration(video_path)
+        _long    = _pre_dur > 600  # > 10 minutos
         segments, audio_info = whisper_model.transcribe(
             str(video_path),
             language=language,
             word_timestamps=False,
-            vad_filter=True,
+            vad_filter=not _long,
+            chunk_length=30,
             condition_on_previous_text=False,
-            beam_size=5,
+            beam_size=1 if _long else 5,
         )
         duration = round(float(audio_info.duration), 3)
     except Exception as e:
@@ -1709,14 +1715,17 @@ def process_video(video_path: Path, language: str, model: str, progress_q=None,
         _emit(progress_q, f"STEP:2:Cargando modelo Whisper '{model}'...")
         whisper_model, model = _load_whisper_model(model, progress_q)
         _emit(progress_q, "STEP:2:Transcribiendo audio...")
+        _pre_dur2 = get_video_duration(dest_video)
+        _long2    = _pre_dur2 > 600  # > 10 minutos
         segments, audio_info = whisper_model.transcribe(  # audio_info.duration = duracion real
             str(dest_video),
             language=language,
             word_timestamps=True,
             vad_filter=False,
+            chunk_length=30,
             condition_on_previous_text=False,
             no_speech_threshold=0.7,
-            beam_size=5,
+            beam_size=1 if _long2 else 5,
         )
         # audio_info.duration es la duracion real del audio medida por Whisper
         # Es la fuente mas fiable — ffprobe puede fallar en algunos sistemas
